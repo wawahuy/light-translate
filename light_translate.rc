@@ -1,0 +1,7 @@
+#include "resource.h"
+
+// Application icon (place app.ico in the app/ directory to use a custom icon)
+// IDI_APP_ICON    ICON    "app.ico"
+
+// DPI-aware, visual-styles manifest
+1 RT_MANIFEST "light_translate.manifest"

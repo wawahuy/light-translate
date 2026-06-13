@@ -3,7 +3,7 @@ project(light_translate CXX)
 
 set(APP_NAME "light_translate")
 
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 option(WITH_MKL        "Compile demo with MKL/OpenBlas support, default use MKL."       ON)
@@ -68,6 +68,9 @@ if (WIN32)
     add_definitions("/DGOOGLE_GLOG_DLL_DECL=")
     if(WITH_MKL)
         set(FLAG_OPENMP "/openmp")
+    endif()
+    if(MSVC)
+        add_compile_options(/utf-8)
     endif()
     set(CMAKE_C_FLAGS_DEBUG   "${CMAKE_C_FLAGS_DEBUG} /bigobj /MTd ${FLAG_OPENMP}")
     set(CMAKE_C_FLAGS_RELEASE  "${CMAKE_C_FLAGS_RELEASE} /bigobj /MT ${FLAG_OPENMP}")
@@ -223,10 +226,42 @@ if(UNIX)
   find_package(Iconv REQUIRED) 
 endif()
 
-file(GLOB_RECURSE SRC_LIST "./src/*.cc")
-set(SRCS main.cc )
-add_executable(${APP_NAME} ${SRCS} ${SRC_LIST} )
-target_link_libraries(${APP_NAME} ${DEPS} )
+file(GLOB_RECURSE HEADER_LIST
+  "./src/*.h"
+  "./src/*.hpp"
+)
+file(GLOB_RECURSE SRC_LIST
+  "./src/*.cc"
+  "./src/*.cpp"
+) 
+set(SRCS main.cpp)
+add_executable(${APP_NAME} WIN32 ${SRCS} ${SRC_LIST} ${HEADER_LIST})
+target_link_libraries(${APP_NAME} ${DEPS}
+  user32
+  gdi32
+  gdiplus
+  comctl32
+  comdlg32
+  winhttp
+  winmm
+)
+target_compile_definitions(${APP_NAME} PRIVATE
+  UNICODE
+  _UNICODE
+  WIN32_LEAN_AND_MEAN
+  NOMINMAX
+)
+target_sources(${APP_NAME} PRIVATE
+  light_translate.rc
+)
+source_group(
+  TREE "${CMAKE_SOURCE_DIR}"
+  FILES
+    ${SRCS}
+    ${SRC_LIST}
+    ${HEADER_LIST}
+    light_translate.rc
+)
 
 if (WIN32 AND WITH_MKL)
     add_custom_command(TARGET ${APP_NAME} POST_BUILD
