@@ -56,6 +56,16 @@ void RegionResultWindow::Destroy()
 
 void RegionResultWindow::ShowResult(const RECT& region, const std::wstring& text)
 {
+    // If the window already exists at the exact same region, just update the text and redraw
+    if (m_hwnd && m_region.left == region.left && m_region.top == region.top &&
+        (m_region.right - m_region.left) == (region.right - region.left) &&
+        (m_region.bottom - m_region.top) == (region.bottom - region.top))
+    {
+        m_text = text;
+        InvalidateRect(m_hwnd, nullptr, TRUE);
+        return;
+    }
+
     // Clean up any previous result window
     Hide();
 

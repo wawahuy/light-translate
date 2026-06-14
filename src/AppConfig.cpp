@@ -73,6 +73,8 @@ void AppConfig::Save(const std::wstring& iniPath) const
     WriteInt(L"Overlay", L"Y",       overlayPos.y, f);
     WriteInt(L"Overlay", L"W",       overlayWidth, f);
     WriteInt(L"Overlay", L"H",       overlayHeight, f);
+    WriteInt(L"SettingsWindow", L"X", settingsWndPos.x, f);
+    WriteInt(L"SettingsWindow", L"Y", settingsWndPos.y, f);
 
     WriteStr(L"Font", L"Name",       fontName, f);
     WriteInt(L"Font", L"Size",       fontSize, f);
@@ -119,6 +121,8 @@ bool AppConfig::Load(const std::wstring& iniPath)
     overlayPos.y = ReadInt(L"Overlay", L"Y", 100, f);
     overlayWidth = ReadInt(L"Overlay", L"W", 800, f);
     overlayHeight = ReadInt(L"Overlay", L"H", 250, f);
+    settingsWndPos.x = ReadInt(L"SettingsWindow", L"X", -1, f);
+    settingsWndPos.y = ReadInt(L"SettingsWindow", L"Y", -1, f);
 
     fontName    = ReadStr(L"Font", L"Name",       fontName, f);
     fontSize    = ReadInt(L"Font", L"Size",        24, f);

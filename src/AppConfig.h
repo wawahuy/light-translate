@@ -48,6 +48,7 @@ struct AppConfig
     POINT overlayPos = { 100, 100 };
     int   overlayWidth = 800;
     int   overlayHeight = 250;
+    POINT settingsWndPos = { -1, -1 };
 
     // ── Typography ────────────────────────────────────────────────────────────
     std::wstring fontName    = L"Arial";

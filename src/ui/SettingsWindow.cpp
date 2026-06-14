@@ -123,6 +123,13 @@ LRESULT SettingsWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
         // Load persisted config
         m_config.Load(GetIniPath());
 
+        // Restore window position if saved
+        if (m_config.settingsWndPos.x != -1 && m_config.settingsWndPos.y != -1)
+        {
+            SetWindowPos(m_hwnd, nullptr, m_config.settingsWndPos.x, m_config.settingsWndPos.y, 0, 0,
+                         SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+
         // Initialize Capture Helper window
         m_captureHelper.Create(m_hInstance);
         m_captureHelper.SetRect(m_config.captureRect);
@@ -165,6 +172,11 @@ LRESULT SettingsWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
         m_regionSelect.Create(m_hInstance);
         m_regionSelect.OnRegionSelected = [&](const RECT& rc)
             {
+                // Show result window immediately with placeholder text
+                m_regionResult.SetFontName(m_config.fontName);
+                m_regionResult.SetFontSize(m_config.fontSize);
+                m_regionResult.ShowResult(rc, L"");
+
                 // Spawn a background thread for capture + OCR + translate
                 std::thread([this, rc]() {
                     PerformRegionCapture(rc);
@@ -213,9 +225,16 @@ LRESULT SettingsWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
         if (lParam)
         {
             auto* data = reinterpret_cast<RegionResultData*>(lParam);
-            m_regionResult.SetFontName(m_config.fontName);
-            m_regionResult.SetFontSize(m_config.fontSize);
-            m_regionResult.ShowResult(data->region, data->text);
+            if (data->text.empty())
+            {
+                m_regionResult.Hide();
+            }
+            else
+            {
+                m_regionResult.SetFontName(m_config.fontName);
+                m_regionResult.SetFontSize(m_config.fontSize);
+                m_regionResult.ShowResult(data->region, data->text);
+            }
             delete data;
         }
         return 0;
@@ -312,6 +331,17 @@ LRESULT SettingsWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
         m_captureHelper.Destroy();
         m_overlay.Destroy();
         RemoveTrayIcon();
+
+        // Save settings window position
+        {
+            WINDOWPLACEMENT wp{};
+            wp.length = sizeof(wp);
+            if (GetWindowPlacement(m_hwnd, &wp))
+            {
+                m_config.settingsWndPos.x = wp.rcNormalPosition.left;
+                m_config.settingsWndPos.y = wp.rcNormalPosition.top;
+            }
+        }
         m_config.Save(GetIniPath());
         DestroyWindow(m_hwnd);
         return 0;
@@ -916,13 +946,26 @@ void SettingsWindow::UpdateRegionLabel()
 
 void SettingsWindow::UpdateStatus(const std::wstring& text)
 {
+    // Do not log when window is minimized or hidden/closed to system tray
+    if (IsIconic(m_hwnd) || !IsWindowVisible(m_hwnd))
+    {
+        return;
+    }
+
+    // Limit log message length to prevent layout/buffer issues, truncate with "..." if too long
+    std::wstring dispText = text;
+    if (dispText.size() > 120)
+    {
+        dispText = dispText.substr(0, 117) + L"...";
+    }
+
     HWND hEdit = GetDlgItem(m_hwnd, IDC_STATUS_EDIT);
     // Append with timestamp
     SYSTEMTIME st{};
     GetLocalTime(&st);
     wchar_t line[512]{};
     swprintf_s(line, 512, L"[%02d:%02d:%02d] %ls\r\n",
-        st.wHour, st.wMinute, st.wSecond, text.c_str());
+        st.wHour, st.wMinute, st.wSecond, dispText.c_str());
 
     int len = GetWindowTextLengthW(hEdit);
     SendMessageW(hEdit, EM_SETSEL, len, len);
@@ -1425,6 +1468,9 @@ void SettingsWindow::OnStart()
     m_running = true;
     EnableWindow(GetDlgItem(m_hwnd, IDC_START_BTN), FALSE);
     EnableWindow(GetDlgItem(m_hwnd, IDC_STOP_BTN), TRUE);
+
+    // Minimize settings window immediately
+    ShowWindow(m_hwnd, SW_MINIMIZE);
 }
 
 void SettingsWindow::OnStop()
@@ -1702,6 +1748,8 @@ void SettingsWindow::PerformRegionCapture(const RECT& region)
         if (!m_regionOcr.Initialize(detModelDir, recModelDir))
         {
             UpdateStatus(L"Region OCR Error: Failed to initialize models.");
+            auto* data = new RegionResultData{ region, L"" };
+            PostMessageW(m_hwnd, WM_SHOW_REGION_RESULT, 0, reinterpret_cast<LPARAM>(data));
             return;
         }
         UpdateStatus(L"Region OCR modules initialized successfully.");
@@ -1712,6 +1760,8 @@ void SettingsWindow::PerformRegionCapture(const RECT& region)
     if (detection.empty())
     {
         UpdateStatus(L"No text detected in selected region.");
+        auto* data = new RegionResultData{ region, L"" };
+        PostMessageW(m_hwnd, WM_SHOW_REGION_RESULT, 0, reinterpret_cast<LPARAM>(data));
         return;
     }
 
@@ -1720,6 +1770,8 @@ void SettingsWindow::PerformRegionCapture(const RECT& region)
     if (ocrText.empty())
     {
         UpdateStatus(L"No text recognized in selected region.");
+        auto* data = new RegionResultData{ region, L"" };
+        PostMessageW(m_hwnd, WM_SHOW_REGION_RESULT, 0, reinterpret_cast<LPARAM>(data));
         return;
     }
 
@@ -1734,6 +1786,8 @@ void SettingsWindow::PerformRegionCapture(const RECT& region)
     if (result.empty())
     {
         UpdateStatus(L"Translation API error: " + client.GetLastError());
+        auto* data = new RegionResultData{ region, L"" };
+        PostMessageW(m_hwnd, WM_SHOW_REGION_RESULT, 0, reinterpret_cast<LPARAM>(data));
         return;
     }
 
