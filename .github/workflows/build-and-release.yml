@@ -85,7 +85,7 @@ jobs:
         run: |
           cmake -B build -S . -G "Visual Studio 17 2022" -A x64 `
             -DOPENCV_DIR="${{ github.workspace }}/opencv/opencv/build" `
-            -DPADDLE_LIB="${{ github.workspace }}/paddle_inference_extracted/paddle_inference" `
+            -DPADDLE_LIB="${{ github.workspace }}/paddle_inference_extracted" `
             -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
