@@ -19,6 +19,7 @@ struct AppConfig
     std::wstring apiUrl = L"https://api.deepseek.com/chat/completions";
     std::wstring apiModel = L"deepseek-chat";
     std::wstring apiKey = L"";
+    std::wstring targetLanguage = L"Vietnamese";
 
     // ── Capture ──────────────────────────────────────────────────────────────
     RECT captureRect  = { 0, 0, 800, 100 }; ///< Screen-coordinate capture region

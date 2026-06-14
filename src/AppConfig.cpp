@@ -49,6 +49,7 @@ void AppConfig::Save(const std::wstring& iniPath) const
     WriteStr(L"API", L"Url",    apiUrl, f);
     WriteStr(L"API", L"Model",  apiModel, f);
     WriteStr(L"API", L"Key",    apiKey, f);
+    WriteStr(L"API", L"TargetLanguage", targetLanguage, f);
     WriteInt(L"API", L"Provider", static_cast<int>(providerType), f);
 
     WriteInt(L"Capture", L"Left",    captureRect.left,   f);
@@ -92,6 +93,7 @@ bool AppConfig::Load(const std::wstring& iniPath)
     apiUrl = ReadStr(L"API", L"Url", apiUrl, f);
     apiModel = ReadStr(L"API", L"Model", apiModel, f);
     apiKey = ReadStr(L"API", L"Key", apiKey, f);
+    targetLanguage = ReadStr(L"API", L"TargetLanguage", targetLanguage, f);
     providerType = static_cast<TranslateProvider>(ReadInt(L"API", L"Provider", 0, f));
 
     captureRect.left   = ReadInt(L"Capture", L"Left",    0,   f);

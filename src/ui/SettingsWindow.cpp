@@ -556,7 +556,7 @@ void SettingsWindow::CreateTranslateTab(int x, int y, int w)
 
     int cy = y + 4;
 
-    // Provider
+    // Provider & Language
     h = MakeLabel(x + 8, cy, 75, LH, L"Provider:");
     m_translateControls.push_back(h);
     {
@@ -564,6 +564,42 @@ void SettingsWindow::CreateTranslateTab(int x, int y, int w)
         SendMessageW(hProv, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"DeepSeek"));
         SendMessageW(hProv, CB_SETCURSEL, 0, 0);
         m_translateControls.push_back(hProv);
+    }
+
+    h = MakeLabel(x + 260, cy, 80, LH, L"Target Lang:");
+    m_translateControls.push_back(h);
+    {
+        HWND hLang = CreateWindowExW(0, L"COMBOBOX", L"",
+            WS_CHILD | WS_VISIBLE | CBS_DROPDOWN | CBS_AUTOHSCROLL | WS_VSCROLL,
+            x + 345, cy, w - 355, 200, m_hwnd,
+            reinterpret_cast<HMENU>(static_cast<UINT_PTR>(IDC_LANGUAGE_COMBO)),
+            m_hInstance, nullptr);
+
+        const wchar_t* commonLangs[] = {
+            L"Vietnamese",
+            L"English",
+            L"Japanese",
+            L"Chinese (Simplified)",
+            L"Chinese (Traditional)",
+            L"Korean",
+            L"French",
+            L"German",
+            L"Russian",
+            L"Spanish",
+            L"Portuguese",
+            L"Italian",
+            L"Arabic",
+            L"Thai",
+            L"Indonesian",
+            L"Hindi",
+            L"Turkish"
+        };
+        for (const wchar_t* lang : commonLangs)
+        {
+            SendMessageW(hLang, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(lang));
+        }
+        SendMessageW(hLang, CB_SETCURSEL, 0, 0);
+        m_translateControls.push_back(hLang);
     }
     cy += EH + 8;
 
@@ -678,6 +714,7 @@ void SettingsWindow::ConfigToUI()
 
     SetDlgItemTextW(m_hwnd, IDC_API_MODEL_EDIT, m_config.apiModel.c_str());
     SetDlgItemTextW(m_hwnd, IDC_API_KEY_EDIT, m_config.apiKey.c_str());
+    SetDlgItemTextW(m_hwnd, IDC_LANGUAGE_COMBO, m_config.targetLanguage.c_str());
 
     // Monitor combo
     HWND hMon = GetDlgItem(m_hwnd, IDC_MONITOR_COMBO);
@@ -734,6 +771,10 @@ void SettingsWindow::UIToConfig()
 
     GetDlgItemTextW(m_hwnd, IDC_API_KEY_EDIT, buf, 1024);
     m_config.apiKey = buf;
+
+    GetDlgItemTextW(m_hwnd, IDC_LANGUAGE_COMBO, buf, 64);
+    m_config.targetLanguage = buf;
+    if (m_config.targetLanguage.empty()) m_config.targetLanguage = L"Vietnamese";
 
     HWND hMon = GetDlgItem(m_hwnd, IDC_MONITOR_COMBO);
     m_config.monitorIndex = static_cast<int>(SendMessageW(hMon, CB_GETCURSEL, 0, 0));
@@ -1207,6 +1248,7 @@ void SettingsWindow::OnStart()
     m_client.SetApiKey(m_config.apiKey);
     m_client.SetApiModel(m_config.apiModel);
     m_client.SetProvider(m_config.providerType);
+    m_client.SetTargetLanguage(m_config.targetLanguage);
 
     // Apply appearance to overlay
     m_overlay.SetFontName(m_config.fontName);
@@ -1284,6 +1326,7 @@ void SettingsWindow::OnTestApi()
     tc.SetApiKey(m_config.apiKey);
     tc.SetApiModel(m_config.apiModel);
     tc.SetProvider(m_config.providerType);
+    tc.SetTargetLanguage(m_config.targetLanguage);
 
     std::wstring result = tc.Translate(L"Hello world! This is a test connection message.");
 

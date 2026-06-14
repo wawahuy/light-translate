@@ -38,6 +38,7 @@
 #define IDC_PROVIDER_COMBO    1036   ///< Translate Provider selection
 #define IDC_API_MODEL_EDIT    1037   ///< Translate Model edit
 #define IDC_TAB_CTRL          1038   ///< Main tab control
+#define IDC_LANGUAGE_COMBO    1039   ///< Target language combo box
 
 // === Tray icon ===
 #define WM_TRAYICON           (WM_APP + 100)

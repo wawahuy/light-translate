@@ -140,6 +140,7 @@ TextTranslateProvider::~TextTranslateProvider() = default;
 void TextTranslateProvider::SetApiUrl(const std::wstring& url) { m_apiUrl = url; }
 void TextTranslateProvider::SetApiKey(const std::wstring& key) { m_apiKey = key; }
 void TextTranslateProvider::SetApiModel(const std::wstring& model) { m_apiModel = model; }
+void TextTranslateProvider::SetTargetLanguage(const std::wstring& targetLanguage) { m_targetLanguage = targetLanguage; }
 void TextTranslateProvider::SetProvider(TranslateProvider provider) { m_provider = provider; }
 
 std::wstring TextTranslateProvider::Translate(const std::wstring& text)
@@ -183,8 +184,10 @@ std::wstring TextTranslateProvider::TranslateDeepSeek(const std::wstring& text)
     std::string escapedText = EscapeJsonString(utf8Text);
     std::string utf8Model = WideToUtf8(m_apiModel);
     std::string escapedModel = EscapeJsonString(utf8Model);
+    std::string utf8TargetLang = WideToUtf8(m_targetLanguage);
+    std::string escapedTargetLang = EscapeJsonString(utf8TargetLang);
 
-    std::string jsonBody = "{\"model\":\"" + escapedModel + "\",\"messages\":[{\"role\":\"system\",\"content\":\"Translate the following text to Vietnamese.\"},{\"role\":\"user\",\"content\":\"" + escapedText + "\"}],\"stream\":false}";
+    std::string jsonBody = "{\"model\":\"" + escapedModel + "\",\"messages\":[{\"role\":\"system\",\"content\":\"Translate the following text to " + escapedTargetLang + ".\"},{\"role\":\"user\",\"content\":\"" + escapedText + "\"}],\"stream\":false}";
 
     // Setup session/connection/request
     HINTERNET hSession = WinHttpOpen(
