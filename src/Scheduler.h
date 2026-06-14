@@ -102,4 +102,7 @@ private:
     std::wstring      m_ocrDetModelDir;
     std::wstring      m_ocrRecModelDir;
     std::wstring      m_lastOCRText;
+    std::vector<std::wstring> m_translationHistory;
+    ULONGLONG         m_lastTranslateTime = 0;
+    ULONGLONG         m_lastSeenTime = 0;
 };

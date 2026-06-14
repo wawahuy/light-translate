@@ -1444,7 +1444,7 @@ void SettingsWindow::OnStart()
     m_overlay.SetStrokeWidth(m_config.strokeWidth);
     m_overlay.SetPosition(m_config.overlayPos.x, m_config.overlayPos.y);
     m_overlay.SetSize(m_config.overlayWidth, m_config.overlayHeight);
-    m_overlay.SetText(L"Starting\u2026");
+    m_overlay.SetText(L"");
     m_overlay.Show();
 
     // Start based on capture mode

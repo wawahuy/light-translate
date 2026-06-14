@@ -252,8 +252,8 @@ void OverlayWindow::Redraw()
         {
             Gdiplus::FontFamily family(m_fontName.c_str());
             Gdiplus::StringFormat fmt;
-            fmt.SetAlignment(Gdiplus::StringAlignmentNear);
-            fmt.SetLineAlignment(Gdiplus::StringAlignmentNear);
+            fmt.SetAlignment(Gdiplus::StringAlignmentCenter);
+            fmt.SetLineAlignment(Gdiplus::StringAlignmentFar);
             // No NoWrap flag → GDI+ auto word-wraps within layoutRect
             // No LineLimit flag → partial last line is also rendered
 
