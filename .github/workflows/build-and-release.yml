@@ -103,10 +103,10 @@ jobs:
           Copy-Item -Path "build/Release/light_translate.exe" -Destination "light_translate_release/"
           
           # 1. Copy paddle_inference.dll
-          Copy-Item -Path "paddle_inference_extracted/paddle_inference/paddle/lib/paddle_inference.dll" -Destination "light_translate_release/"
+          Copy-Item -Path "paddle_inference_extracted/paddle/lib/paddle_inference.dll" -Destination "light_translate_release/"
           
           # 2. Copy common.dll
-          Copy-Item -Path "paddle_inference_extracted/paddle_inference/paddle/lib/common.dll" -Destination "light_translate_release/"
+          Copy-Item -Path "paddle_inference_extracted/paddle/lib/common.dll" -Destination "light_translate_release/"
           
           # 3. Copy abseil_dll.dll
           Copy-Item -Path "build/bin/Release/abseil_dll.dll" -Destination "light_translate_release/"
@@ -118,11 +118,11 @@ jobs:
           Copy-Item -Path "opencv/opencv/build/x64/vc16/bin/opencv_world470.dll" -Destination "light_translate_release/"
           
           # Copy MKL DLLs directly from source paths for robustness
-          Copy-Item -Path "paddle_inference_extracted/paddle_inference/third_party/install/mklml/lib/mklml.dll" -Destination "light_translate_release/"
-          Copy-Item -Path "paddle_inference_extracted/paddle_inference/third_party/install/mklml/lib/libiomp5md.dll" -Destination "light_translate_release/"
+          Copy-Item -Path "paddle_inference_extracted/third_party/install/mklml/lib/mklml.dll" -Destination "light_translate_release/"
+          Copy-Item -Path "paddle_inference_extracted/third_party/install/mklml/lib/libiomp5md.dll" -Destination "light_translate_release/"
           
           # Check and copy mkldnn.dll if it exists (onednn path)
-          $mkldnnPath = "paddle_inference_extracted/paddle_inference/third_party/install/onednn/lib/mkldnn.dll"
+          $mkldnnPath = "paddle_inference_extracted/third_party/install/onednn/lib/mkldnn.dll"
           if (Test-Path $mkldnnPath) {
               Copy-Item -Path $mkldnnPath -Destination "light_translate_release/"
           }
