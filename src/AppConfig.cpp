@@ -57,7 +57,12 @@ void AppConfig::Save(const std::wstring& iniPath) const
     WriteInt(L"Capture", L"Bottom",  captureRect.bottom, f);
     WriteInt(L"Capture", L"Set",     captureSet   ? 1 : 0, f);
     WriteInt(L"Capture", L"Monitor", monitorIndex, f);
-    WriteDouble(L"Capture", L"FPS",  framesPerSecond, f);
+    WriteInt(L"Capture", L"Mode",    static_cast<int>(captureMode), f);
+    WriteInt(L"Capture", L"IntervalMs", captureIntervalMs, f);
+    WriteInt(L"Capture", L"HotkeyVk",  static_cast<int>(hotkeyVk), f);
+    WriteInt(L"Capture", L"HotkeyMod", static_cast<int>(hotkeyMod), f);
+    WriteInt(L"Capture", L"PauseHotkeyVk",  static_cast<int>(pauseHotkeyVk), f);
+    WriteInt(L"Capture", L"PauseHotkeyMod", static_cast<int>(pauseHotkeyMod), f);
 
     WriteInt(L"Overlay", L"X",       overlayPos.x, f);
     WriteInt(L"Overlay", L"Y",       overlayPos.y, f);
@@ -93,7 +98,12 @@ bool AppConfig::Load(const std::wstring& iniPath)
     captureRect.bottom = ReadInt(L"Capture", L"Bottom",  100, f);
     captureSet         = ReadInt(L"Capture", L"Set",     0,   f) != 0;
     monitorIndex       = ReadInt(L"Capture", L"Monitor", 0,   f);
-    framesPerSecond    = ReadDouble(L"Capture", L"FPS",  2.0,  f);
+    captureMode        = static_cast<CaptureMode>(ReadInt(L"Capture", L"Mode", 0, f));
+    captureIntervalMs  = ReadInt(L"Capture", L"IntervalMs", 1000, f);
+    hotkeyVk           = static_cast<UINT>(ReadInt(L"Capture", L"HotkeyVk", VK_F2, f));
+    hotkeyMod          = static_cast<UINT>(ReadInt(L"Capture", L"HotkeyMod", 0, f));
+    pauseHotkeyVk      = static_cast<UINT>(ReadInt(L"Capture", L"PauseHotkeyVk", VK_F3, f));
+    pauseHotkeyMod     = static_cast<UINT>(ReadInt(L"Capture", L"PauseHotkeyMod", 0, f));
 
     overlayPos.x = ReadInt(L"Overlay", L"X", 100, f);
     overlayPos.y = ReadInt(L"Overlay", L"Y", 100, f);

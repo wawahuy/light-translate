@@ -15,7 +15,7 @@ Light Translate is a desktop utility that captures text from your screen via reg
 | [Paddle Inference](https://paddleinference.paddlepaddle.org.cn/) | 3.0 | C++ prediction library |
 | [OpenCV](https://opencv.org/) | 4.7 | Built with `opencv_world` recommended |
 | [CMake](https://cmake.org/) | 3.31+ | Build system |
-| C++ Compiler | C++11 | MSVC 2022 |
+| C++ Compiler | C++17 | MSVC 2022 |
 
 > **Tip**: Enable `WITH_MKL` for Intel CPUs to get the best inference speed. Set `WITH_MKL=OFF` to fall back to OpenBLAS on non-Intel systems.
 
@@ -51,7 +51,7 @@ Key CMake options:
 Contributions are welcome! Please follow these guidelines:
 
 1. Fork the repository and create a feature branch from `main`.
-2. Keep the coding style consistent (C++11, Google-style naming).
+2. Keep the coding style consistent (C++17, Google-style naming).
 3. Ensure the build passes with both MKL and non-MKL configurations.
 4. Submit a pull request with a clear description of the changes.
 

@@ -13,6 +13,10 @@
 #define IDC_SELECT_REGION     1012
 #define IDC_REGION_INFO       1013
 #define IDC_FPM_COMBO         1014
+#define IDC_CAPTURE_MODE_COMBO 1015  ///< Auto / Hotkey capture mode
+#define IDC_INTERVAL_EDIT     1016   ///< Interval in ms (Auto mode)
+#define IDC_HOTKEY_EDIT       1017   ///< Hotkey display (Hotkey mode)
+#define IDC_PAUSE_HOTKEY_EDIT 1018   ///< Pause hotkey (Auto mode)
 
 #define IDC_STATIC_OVERLAY    1020
 #define IDC_OVERLAY_POS_LABEL 1021   ///< Read-only "X: …  Y: …" label
@@ -32,6 +36,7 @@
 #define IDC_STATUS_EDIT       1035
 #define IDC_PROVIDER_COMBO    1036   ///< Translate Provider selection
 #define IDC_API_MODEL_EDIT    1037   ///< Translate Model edit
+#define IDC_TAB_CTRL          1038   ///< Main tab control
 
 // === Tray icon ===
 #define WM_TRAYICON           (WM_APP + 100)

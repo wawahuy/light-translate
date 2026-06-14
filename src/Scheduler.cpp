@@ -57,26 +57,39 @@ bool Scheduler::Start(int intervalMs)
 
     m_intervalMs.store(intervalMs);
     m_shouldStop.store(false);
+    m_paused.store(false);
     m_diffDetector.Reset();
 
     // Manual-reset stop event (signalled on Stop())
     m_hStopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
 
-    // High-resolution waitable timer (falls back to standard on older Windows)
-    m_hTimer = CreateWaitableTimerExW(
-        nullptr, nullptr,
-        CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
-        TIMER_ALL_ACCESS);
-    if (!m_hTimer)
-        m_hTimer = CreateWaitableTimerW(nullptr, FALSE, nullptr);
+    // Auto-reset trigger event (for TriggerOnce / Hotkey mode)
+    m_hTriggerEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
 
-    if (!m_hTimer || !m_hStopEvent) return false;
+    if (intervalMs > 0)
+    {
+        // Auto mode: use waitable timer
+        m_hTimer = CreateWaitableTimerExW(
+            nullptr, nullptr,
+            CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+            TIMER_ALL_ACCESS);
+        if (!m_hTimer)
+            m_hTimer = CreateWaitableTimerW(nullptr, FALSE, nullptr);
 
-    // Arm the timer: first fire after intervalMs, then period = intervalMs
-    LARGE_INTEGER li{};
-    li.QuadPart = -static_cast<LONGLONG>(intervalMs) * 10000LL;  // 100-ns units, relative
-    SetWaitableTimer(m_hTimer, &li, intervalMs, nullptr, nullptr, FALSE);
-    if (OnStatus) OnStatus(L"Scheduler starting with interval " + std::to_wstring(intervalMs) + L" ms...");
+        if (!m_hTimer || !m_hStopEvent) return false;
+
+        // Arm the timer: first fire after intervalMs, then period = intervalMs
+        LARGE_INTEGER li{};
+        li.QuadPart = -static_cast<LONGLONG>(intervalMs) * 10000LL;  // 100-ns units, relative
+        SetWaitableTimer(m_hTimer, &li, intervalMs, nullptr, nullptr, FALSE);
+        if (OnStatus) OnStatus(L"Scheduler starting with interval " + std::to_wstring(intervalMs) + L" ms...");
+    }
+    else
+    {
+        // Hotkey / manual mode: no timer, wait for TriggerOnce()
+        m_hTimer = nullptr;
+        if (OnStatus) OnStatus(L"Scheduler starting in manual trigger mode...");
+    }
 
     m_running.store(true);
 
@@ -93,7 +106,8 @@ void Scheduler::Stop()
     m_shouldStop.store(true);
 
     // Wake up scheduler thread
-    if (m_hStopEvent) SetEvent(m_hStopEvent);
+    if (m_hStopEvent)    SetEvent(m_hStopEvent);
+    if (m_hTriggerEvent) SetEvent(m_hTriggerEvent);
 
     // Wake up network thread
     {
@@ -105,8 +119,9 @@ void Scheduler::Stop()
     if (m_schedulerThread.joinable()) m_schedulerThread.join();
     if (m_networkThread.joinable())   m_networkThread.join();
 
-    if (m_hTimer)     { CloseHandle(m_hTimer);     m_hTimer     = nullptr; }
-    if (m_hStopEvent) { CloseHandle(m_hStopEvent); m_hStopEvent = nullptr; }
+    if (m_hTimer)        { CloseHandle(m_hTimer);        m_hTimer        = nullptr; }
+    if (m_hStopEvent)    { CloseHandle(m_hStopEvent);    m_hStopEvent    = nullptr; }
+    if (m_hTriggerEvent) { CloseHandle(m_hTriggerEvent); m_hTriggerEvent = nullptr; }
 
     m_running.store(false);
     m_ocrEngine.Reset();
@@ -125,21 +140,61 @@ void Scheduler::SetIntervalMs(int ms)
     }
 }
 
+void Scheduler::TriggerOnce()
+{
+    if (m_hTriggerEvent)
+        SetEvent(m_hTriggerEvent);
+}
+
+void Scheduler::SetPaused(bool paused)
+{
+    m_paused.store(paused);
+    if (OnStatus) OnStatus(paused ? L"Scheduler paused." : L"Scheduler resumed.");
+}
+
 // ── Scheduler thread ──────────────────────────────────────────────────────────
 
 void Scheduler::SchedulerProc()
 {
-    const HANDLE handles[2] = { m_hTimer, m_hStopEvent };
-
     if (OnStatus) OnStatus(L"Scheduler started.");
+
+    // Build the wait handle array depending on mode
+    HANDLE handles[3];
+    DWORD  handleCount;
+
+    if (m_hTimer)
+    {
+        // Auto mode: timer + trigger + stop
+        handles[0] = m_hTimer;
+        handles[1] = m_hTriggerEvent;
+        handles[2] = m_hStopEvent;
+        handleCount = 3;
+    }
+    else
+    {
+        // Manual mode: trigger + stop only
+        handles[0] = m_hTriggerEvent;
+        handles[1] = m_hStopEvent;
+        handleCount = 2;
+    }
+
     while (!m_shouldStop.load())
     {
-        // Wait for timer OR stop event
-        DWORD res = WaitForMultipleObjects(2, handles, FALSE, INFINITE);
-        if (res != WAIT_OBJECT_0)
-            break;  // stop event fired, or error
+        DWORD res = WaitForMultipleObjects(handleCount, handles, FALSE, INFINITE);
+
+        // Check which handle fired
+        DWORD idx = res - WAIT_OBJECT_0;
+        if (idx >= handleCount) break;  // error
+
+        // Stop event is always the last handle
+        if (handles[idx] == m_hStopEvent) break;
 
         if (m_shouldStop.load()) break;
+
+        if (m_paused.load())
+        {
+            continue;
+        }
 
         // Drop this tick if network is still busy
         if (m_networkBusy.load())
@@ -250,13 +305,13 @@ void Scheduler::NetworkProc()
             }
 
             // Check if text regions changed visually (before recognition)
-            if (!m_diffDetector.HasChanged(detection.regionGrays))
-            {
-                if (OnStatus) OnStatus(L"Skipped (text regions unchanged)");
-                m_networkBusy.store(false);
-                continue;
-            }
-            if (OnStatus) OnStatus(L"textRegionDiff = " + std::to_wstring(m_diffDetector.LastDiffValue()));
+            // if (!m_diffDetector.HasChanged(detection.regionGrays))
+            // {
+            //     if (OnStatus) OnStatus(L"Skipped (text regions unchanged)");
+            //     m_networkBusy.store(false);
+            //     continue;
+            // }
+            // if (OnStatus) OnStatus(L"textRegionDiff = " + std::to_wstring(m_diffDetector.LastDiffValue()));
 
             // Phase 2: Recognize text (only if regions changed)
             OcrResult ocrResult = m_ocrEngine.Recognize(detection);

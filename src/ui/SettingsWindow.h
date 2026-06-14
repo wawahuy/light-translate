@@ -1,8 +1,10 @@
 #pragma once
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <commctrl.h>
 #include <memory>
 #include <string>
+#include <vector>
 #include "src/AppConfig.h"
 #include "src/capture/CaptureEngine.h"
 #include "src/overlay/OverlayWindow.h"
@@ -32,12 +34,22 @@ private:
 
     // -- WM_CREATE helpers -----------------------------------------------------
     void CreateControls();
+    void CreateRealtimeTab(int x, int y, int w);
+    void CreateTranslateTab(int x, int y, int w);
     HWND MakeLabel (int x, int y, int w, int h, const wchar_t* txt);
     HWND MakeEdit  (int x, int y, int w, int h, UINT id, bool multiLine = false);
     HWND MakeButton(int x, int y, int w, int h, const wchar_t* txt, UINT id);
     HWND MakeCheck (int x, int y, int w, int h, const wchar_t* txt, UINT id);
     HWND MakeCombo (int x, int y, int w, int h, UINT id);
     HWND MakeGroup (int x, int y, int w, int h, const wchar_t* txt);
+
+    // -- Tab management --------------------------------------------------------
+    void OnTabChanged();
+    void ShowTab(int index);
+
+    // -- Capture mode ----------------------------------------------------------
+    void OnCaptureModeChanged();
+    void UpdateCaptureModeUI();
 
     // -- Command handlers ------------------------------------------------------
     void OnStart();
@@ -58,6 +70,16 @@ private:
     void UpdateStatus(const std::wstring& text);
     void SyncHelperWindows();
 
+    // -- Hotkey ----------------------------------------------------------------
+    void RegisterCaptureHotkey();
+    void UnregisterCaptureHotkey();
+    void RegisterPauseHotkey();
+    void UnregisterPauseHotkey();
+    void OnHotkey(int id);
+    static const int HOTKEY_CAPTURE_ID = 1;
+    static const int HOTKEY_PAUSE_ID = 2;
+    static LRESULT CALLBACK HotkeyEditSubclassProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
+
     // -- System tray -----------------------------------------------------------
     void AddTrayIcon();
     void RemoveTrayIcon();
@@ -65,12 +87,26 @@ private:
 
     // -- Misc ------------------------------------------------------------------
     std::wstring GetIniPath() const;
+    static std::wstring VkToName(UINT vk);
+    static std::wstring HotkeyToString(UINT vk, UINT mod);
 
     // -- Data ------------------------------------------------------------------
     HWND        m_hwnd      = nullptr;
     HINSTANCE   m_hInstance = nullptr;
     bool        m_trayAdded = false;
     bool        m_running   = false;
+    bool        m_hotkeyRegistered = false;
+    bool        m_pauseHotkeyRegistered = false;
+
+    // Tab control
+    HWND                  m_tabCtrl = nullptr;
+    int                   m_currentTab = 0;
+    std::vector<HWND>     m_realtimeControls;    ///< Controls on "Realtime" tab
+    std::vector<HWND>     m_translateControls;   ///< Controls on "Translate" tab
+
+    // Capture mode sub-controls (conditionally shown within Realtime tab)
+    std::vector<HWND>     m_autoModeControls;    ///< Interval edit (Auto mode)
+    std::vector<HWND>     m_hotkeyModeControls;  ///< Hotkey edit (Hotkey mode)
 
     AppConfig        m_config;
     CaptureEngine    m_capture;
@@ -81,5 +117,5 @@ private:
 
     static constexpr wchar_t CLASS_NAME[] = L"GameTranslate_SettingsWnd";
     static constexpr int WND_W = 560;
-    static constexpr int WND_H = 804;   // +64 cho provider combo + WS URL
+    static constexpr int WND_H = 680;
 };

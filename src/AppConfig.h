@@ -3,6 +3,13 @@
 #include <string>
 #include "network/TranslateProvider.h"
 
+/// Capture trigger mode.
+enum class CaptureMode : int
+{
+    Auto   = 0,  ///< Continuous capture at fixed interval
+    Hotkey = 1,  ///< Capture one frame when hotkey is pressed
+};
+
 /// All user-configurable settings.
 /// Persisted as a UTF-16 INI file via the Win32 Profile API.
 struct AppConfig
@@ -18,13 +25,18 @@ struct AppConfig
     bool captureSet   = false;              ///< Whether the user has chosen a region
     int  monitorIndex = 0;                  ///< 0 = primary monitor
 
-    // -- Scheduler ------------------------------------------------------------
-    double framesPerSecond = 2.0; ///< Accepted values: 0.5, 1.0, 2.0, 4.0
+    // -- Scheduler / Capture mode ----------------------------------------------
+    CaptureMode captureMode     = CaptureMode::Auto;
+    int         captureIntervalMs = 1000; ///< Interval between auto-capture frames (ms)
+    UINT        hotkeyVk        = VK_F2;  ///< Virtual-key code for hotkey capture
+    UINT        hotkeyMod       = 0;      ///< Key modifiers (MOD_CONTROL, MOD_SHIFT, etc.)
+    UINT        pauseHotkeyVk   = VK_F3;  ///< Virtual-key code for pause hotkey
+    UINT        pauseHotkeyMod  = 0;      ///< Key modifiers for pause hotkey
 
-    /// Converts framesPerSecond to millisecond interval.
+    /// Returns the configured interval (used by Scheduler in Auto mode).
     [[nodiscard]] int GetIntervalMs() const noexcept
     {
-        return (framesPerSecond > 0.0) ? static_cast<int>(1000.0 / framesPerSecond) : 1000;
+        return (captureIntervalMs > 0) ? captureIntervalMs : 1000;
     }
 
     // -- Overlay position & size ----------------------------------------------

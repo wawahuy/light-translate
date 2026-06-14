@@ -54,6 +54,13 @@ public:
     /// Change the timer period without restarting (thread-safe).
     void SetIntervalMs(int ms);
 
+    /// Trigger a single capture cycle (used in Hotkey mode).
+    void TriggerOnce();
+
+    /// Pause/Resume the scheduler (used in Auto mode).
+    void SetPaused(bool paused);
+    bool IsPaused() const { return m_paused.load(); }
+
     bool IsRunning() const { return m_running.load(); }
 
     /// Status callback - invoked from the scheduler/network thread.
@@ -73,10 +80,12 @@ private:
     std::thread       m_networkThread;
     std::atomic<bool> m_running   { false };
     std::atomic<bool> m_shouldStop{ false };
+    std::atomic<bool> m_paused    { false };
 
     // -- Waitable timer --------------------------------------------------------
     HANDLE            m_hTimer     = nullptr;
     HANDLE            m_hStopEvent = nullptr;       // signals threads to exit
+    HANDLE            m_hTriggerEvent = nullptr;    // manual trigger event (Hotkey mode)
     std::atomic<int>  m_intervalMs { 1000 };
 
     // -- Single-slot frame queue -----------------------------------------------
