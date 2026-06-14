@@ -45,6 +45,41 @@ jobs:
           echo "Extracting Paddle Inference 3.0.0..."
           7z x paddle_inference.zip -opaddle_inference_extracted
 
+      - name: Setup dirent.h for MSVC
+        shell: pwsh
+        run: |
+          echo "Downloading dirent.h..."
+          Invoke-WebRequest -Uri "https://paddleocr.bj.bcebos.com/deploy/cpp_infer/cpp_files/dirent.h" -OutFile "dirent.h"
+          
+          # Find Visual Studio VC include folder
+          $vsIncludePaths = @(
+              "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\VS\include",
+              "C:\Program Files (x86)\Microsoft Visual Studio\2022\Community\VC\Auxiliary\VS\include",
+              "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\VS\include"
+          )
+          
+          $targetPath = $null
+          foreach ($path in $vsIncludePaths) {
+              if (Test-Path $path) {
+                  $targetPath = $path
+                  break
+              }
+          }
+          
+          if ($null -eq $targetPath) {
+              $found = Get-ChildItem -Path "C:\Program Files*" -Filter "include" -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.FullName -like "*VC\Auxiliary\VS\include" } | Select-Object -ExpandProperty FullName -First 1
+              if ($found) {
+                  $targetPath = $found
+              }
+          }
+          
+          if ($targetPath) {
+              echo "Copying dirent.h to $targetPath"
+              Copy-Item -Path "dirent.h" -Destination (Join-Path $targetPath "dirent.h") -Force
+          } else {
+              Write-Error "Could not find Visual Studio VC include directory!"
+          }
+
       - name: Configure CMake
         shell: pwsh
         run: |
@@ -62,6 +97,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path "light_translate_release"
+          New-Item -ItemType Directory -Path "light_translate_release/models"
           
           # Copy binary
           Copy-Item -Path "build/Release/light_translate.exe" -Destination "light_translate_release/"
@@ -90,6 +126,22 @@ jobs:
           if (Test-Path $mkldnnPath) {
               Copy-Item -Path $mkldnnPath -Destination "light_translate_release/"
           }
+          
+          # Download and extract PP-OCRv5 Mobile Detection Model
+          echo "Downloading Detection Model..."
+          Invoke-WebRequest -Uri "https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-OCRv5_mobile_det_infer.tar" -OutFile "det_infer.tar"
+          echo "Extracting Detection Model..."
+          7z x det_infer.tar -odet_temp
+          $detDir = Get-ChildItem -Path "det_temp" -Directory | Select-Object -First 1
+          Move-Item -Path $detDir.FullName -Destination "light_translate_release/models/OCRv5_mobile_det_infer"
+          
+          # Download and extract PP-OCRv5 Mobile Recognition Model
+          echo "Downloading Recognition Model..."
+          Invoke-WebRequest -Uri "https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0//PP-OCRv5_mobile_rec_infer.tar" -OutFile "rec_infer.tar"
+          echo "Extracting Recognition Model..."
+          7z x rec_infer.tar -orec_temp
+          $recDir = Get-ChildItem -Path "rec_temp" -Directory | Select-Object -First 1
+          Move-Item -Path $recDir.FullName -Destination "light_translate_release/models/OCRv5_mobile_rec_infer"
           
           # Zip the release folder
           Compress-Archive -Path "light_translate_release/*" -DestinationPath "light-translate-windows-x64.zip"
