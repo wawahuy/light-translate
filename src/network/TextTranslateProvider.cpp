@@ -187,7 +187,7 @@ std::wstring TextTranslateProvider::TranslateDeepSeek(const std::wstring& text)
     std::string utf8TargetLang = WideToUtf8(m_targetLanguage);
     std::string escapedTargetLang = EscapeJsonString(utf8TargetLang);
 
-    std::string jsonBody = "{\"model\":\"" + escapedModel + "\",\"messages\":[{\"role\":\"system\",\"content\":\"Translate the following text to " + escapedTargetLang + ".\"},{\"role\":\"user\",\"content\":\"" + escapedText + "\"}],\"stream\":false}";
+    std::string jsonBody = "{\"model\":\"" + escapedModel + "\",\"messages\":[{\"role\":\"system\",\"content\":\"Translate the input text to " + escapedTargetLang + ". Output ONLY the direct translation without any explanations, notes, or extra conversational text. Keep the original formatting and line breaks.\"},{\"role\":\"user\",\"content\":\"" + escapedText + "\"}],\"stream\":false}";
 
     // Setup session/connection/request
     HINTERNET hSession = WinHttpOpen(
