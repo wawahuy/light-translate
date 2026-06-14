@@ -7,7 +7,7 @@
 #include <vector>
 #include "src/AppConfig.h"
 #include "src/capture/CaptureEngine.h"
-#include "src/overlay/OverlayWindow.h"
+#include "src/ui/OverlayWindow.h"
 #include "src/ui/CaptureHelperWindow.h"
 #include "src/ui/RegionSelectWindow.h"
 #include "src/ui/RegionResultWindow.h"

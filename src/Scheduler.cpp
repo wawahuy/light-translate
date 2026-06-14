@@ -2,7 +2,7 @@
 #include "src/capture/CaptureEngine.h"
 #include "src/network/TextTranslateProvider.h"
 #include "src/utils/StringUtils.h"
-#include "overlay/OverlayWindow.h"
+#include "src/ui/OverlayWindow.h"
 #include <opencv2/imgproc.hpp>
 
 // Các hằng số WaitableTimer có thể chưa có trong MinGW-w64 cũ

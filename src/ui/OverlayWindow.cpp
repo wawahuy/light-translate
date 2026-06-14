@@ -1,4 +1,4 @@
-#include "src/overlay/OverlayWindow.h"
+#include "src/ui/OverlayWindow.h"
 #include "resource.h"
 #include <objbase.h>   // MinGW-w64: phải include trước gdiplus để có PROPID
 #include <gdiplus.h>
