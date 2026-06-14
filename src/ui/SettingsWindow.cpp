@@ -1,5 +1,6 @@
 #include "src/ui/SettingsWindow.h"
 #include "src/utils/ImageEncoder.h"
+#include "src/utils/StringUtils.h"
 #include "resource.h"
 #include <shellapi.h>
 #include <commctrl.h>
@@ -7,9 +8,17 @@
 #include <shlobj.h>
 #include <string>
 #include <cwchar>
+#include <thread>
+#include <opencv2/imgproc.hpp>
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "comdlg32.lib")
+
+struct RegionResultData
+{
+    RECT region;
+    std::wstring text;
+};
 
 constexpr wchar_t SettingsWindow::CLASS_NAME[];
 
@@ -23,6 +32,7 @@ SettingsWindow::~SettingsWindow()
     UnregisterCaptureHotkey();
     UnregisterPauseHotkey();
     UnregisterToggleWndHotkey();
+    UnregisterRegionHotkey();
     RemoveTrayIcon();
 }
 
@@ -148,6 +158,20 @@ LRESULT SettingsWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
         // Register settings window toggle hotkey (active globally while app is open)
         RegisterToggleWndHotkey();
 
+        // Register region selection hotkey (active globally, no need for START)
+        RegisterRegionHotkey();
+
+        // Initialize region selection + result windows
+        m_regionSelect.Create(m_hInstance);
+        m_regionSelect.OnRegionSelected = [&](const RECT& rc)
+            {
+                // Spawn a background thread for capture + OCR + translate
+                std::thread([this, rc]() {
+                    PerformRegionCapture(rc);
+                }).detach();
+            };
+        m_regionResult.Create(m_hInstance);
+
         // Show helper windows if Settings is visible
         SyncHelperWindows();
 
@@ -179,6 +203,20 @@ LRESULT SettingsWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
             swprintf(posBuf, 64, L"X: %ld   Y: %ld",
                 m_config.overlayPos.x, m_config.overlayPos.y);
             SetDlgItemTextW(m_hwnd, IDC_OVERLAY_POS_LABEL, posBuf);
+        }
+        return 0;
+    }
+
+    // -- Show region select result (from background thread) ---------------------
+    case WM_SHOW_REGION_RESULT:
+    {
+        if (lParam)
+        {
+            auto* data = reinterpret_cast<RegionResultData*>(lParam);
+            m_regionResult.SetFontName(m_config.fontName);
+            m_regionResult.SetFontSize(m_config.fontSize);
+            m_regionResult.ShowResult(data->region, data->text);
+            delete data;
         }
         return 0;
     }
@@ -268,6 +306,9 @@ LRESULT SettingsWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
         UnregisterCaptureHotkey();
         UnregisterPauseHotkey();
         UnregisterToggleWndHotkey();
+        UnregisterRegionHotkey();
+        m_regionResult.Destroy();
+        m_regionSelect.Destroy();
         m_captureHelper.Destroy();
         m_overlay.Destroy();
         RemoveTrayIcon();
@@ -358,18 +399,21 @@ void SettingsWindow::CreateControls()
         reinterpret_cast<HMENU>(static_cast<UINT_PTR>(IDC_TAB_CTRL)),
         m_hInstance, nullptr);
 
-    // Insert tabs: Realtime first, Translate second
+    // Insert tabs: Realtime, Region, Translate, System
     TCITEMW tie{};
     tie.mask = TCIF_TEXT;
 
     tie.pszText = const_cast<wchar_t*>(L"Realtime");
     TabCtrl_InsertItem(m_tabCtrl, 0, &tie);
 
-    tie.pszText = const_cast<wchar_t*>(L"Translate");
+    tie.pszText = const_cast<wchar_t*>(L"Region");
     TabCtrl_InsertItem(m_tabCtrl, 1, &tie);
 
-    tie.pszText = const_cast<wchar_t*>(L"System");
+    tie.pszText = const_cast<wchar_t*>(L"Translate");
     TabCtrl_InsertItem(m_tabCtrl, 2, &tie);
+
+    tie.pszText = const_cast<wchar_t*>(L"System");
+    TabCtrl_InsertItem(m_tabCtrl, 3, &tie);
 
     // Get the display area inside the tab control
     RECT tabRect{};
@@ -383,6 +427,7 @@ void SettingsWindow::CreateControls()
     // Create controls for each tab
     CreateRealtimeTab(tabX, tabY, tabW);
     CreateTranslateTab(tabX, tabY, tabW);
+    CreateRegionTab(tabX, tabY, tabW);
     CreateSystemTab(tabX, tabY, tabW);
 
     // Show the first tab (Realtime) by default
@@ -479,7 +524,7 @@ void SettingsWindow::CreateRealtimeTab(int x, int y, int w)
         m_autoModeControls.push_back(h);
 
         h = MakeEdit(x + 295, cy, 130, EH, IDC_PAUSE_HOTKEY_EDIT);
-        SetWindowTextW(h, L"F3");
+        SetWindowTextW(h, L"Ctrl + P");
         SetWindowSubclass(h, HotkeyEditSubclassProc, IDC_PAUSE_HOTKEY_EDIT, reinterpret_cast<DWORD_PTR>(this));
         m_realtimeControls.push_back(h);
         m_autoModeControls.push_back(h);
@@ -491,7 +536,7 @@ void SettingsWindow::CreateRealtimeTab(int x, int y, int w)
         m_realtimeControls.push_back(h);
         m_hotkeyModeControls.push_back(h);
         h = MakeEdit(x + 120, cy, 80, EH, IDC_HOTKEY_EDIT);
-        SetWindowTextW(h, L"F2");
+        SetWindowTextW(h, L"Ctrl + N");
         SetWindowSubclass(h, HotkeyEditSubclassProc, IDC_HOTKEY_EDIT, reinterpret_cast<DWORD_PTR>(this));
         m_realtimeControls.push_back(h);
         m_hotkeyModeControls.push_back(h);
@@ -641,9 +686,46 @@ void SettingsWindow::CreateSystemTab(int x, int y, int w)
     m_systemControls.push_back(h);
 
     h = MakeEdit(x + 195, cy, 140, EH, IDC_TOGGLE_WND_HOTKEY_EDIT);
-    SetWindowTextW(h, L"Ctrl + Shift + H");
+    SetWindowTextW(h, L"Ctrl + Shift + O");
     SetWindowSubclass(h, HotkeyEditSubclassProc, IDC_TOGGLE_WND_HOTKEY_EDIT, reinterpret_cast<DWORD_PTR>(this));
     m_systemControls.push_back(h);
+}
+
+// -----------------------------------------------------------------------------
+//  CreateRegionTab — Region selection hotkey
+// -----------------------------------------------------------------------------
+
+void SettingsWindow::CreateRegionTab(int x, int y, int w)
+{
+    const int LH = 22;
+    const int EH = 24;
+    HWND h;
+
+    int cy = y + 4;
+
+    // -- Region Selection group ------------------------------------------------
+    h = MakeGroup(x, cy, w, 120, L"  Region Selection  ");
+    m_regionControls.push_back(h);
+    cy += 18;
+
+    h = MakeLabel(x + 8, cy, w - 16, LH,
+        L"Press the hotkey to select a screen region for quick translation.");
+    m_regionControls.push_back(h);
+    cy += LH + 8;
+
+    h = MakeLabel(x + 8, cy, 120, LH, L"Selection Hotkey:");
+    m_regionControls.push_back(h);
+
+    h = MakeEdit(x + 135, cy, 150, EH, IDC_REGION_HOTKEY_EDIT);
+    SetWindowTextW(h, L"Ctrl + M");
+    SetWindowSubclass(h, HotkeyEditSubclassProc, IDC_REGION_HOTKEY_EDIT, reinterpret_cast<DWORD_PTR>(this));
+    m_regionControls.push_back(h);
+    cy += EH + 10;
+
+    h = MakeLabel(x + 8, cy, w - 16, LH * 2,
+        L"After selecting a region, the app will OCR and translate the text. "
+        L"Press any key to dismiss the result.");
+    m_regionControls.push_back(h);
 }
 
 // -----------------------------------------------------------------------------
@@ -660,16 +742,20 @@ void SettingsWindow::ShowTab(int index)
 {
     m_currentTab = index;
 
-    // Tab 0 = Realtime, Tab 1 = Translate, Tab 2 = System
+    // Tab 0 = Realtime, Tab 1 = Region, Tab 2 = Translate, Tab 3 = System
     int showRealtime  = (index == 0) ? SW_SHOW : SW_HIDE;
-    int showTranslate = (index == 1) ? SW_SHOW : SW_HIDE;
-    int showSystem    = (index == 2) ? SW_SHOW : SW_HIDE;
+    int showRegion    = (index == 1) ? SW_SHOW : SW_HIDE;
+    int showTranslate = (index == 2) ? SW_SHOW : SW_HIDE;
+    int showSystem    = (index == 3) ? SW_SHOW : SW_HIDE;
 
     for (HWND h : m_realtimeControls)
         ShowWindow(h, showRealtime);
 
     for (HWND h : m_translateControls)
         ShowWindow(h, showTranslate);
+
+    for (HWND h : m_regionControls)
+        ShowWindow(h, showRegion);
 
     for (HWND h : m_systemControls)
         ShowWindow(h, showSystem);
@@ -733,6 +819,7 @@ void SettingsWindow::ConfigToUI()
     SetDlgItemTextW(m_hwnd, IDC_HOTKEY_EDIT, HotkeyToString(m_config.hotkeyVk, m_config.hotkeyMod).c_str());
     SetDlgItemTextW(m_hwnd, IDC_PAUSE_HOTKEY_EDIT, HotkeyToString(m_config.pauseHotkeyVk, m_config.pauseHotkeyMod).c_str());
     SetDlgItemTextW(m_hwnd, IDC_TOGGLE_WND_HOTKEY_EDIT, HotkeyToString(m_config.toggleWndVk, m_config.toggleWndMod).c_str());
+    SetDlgItemTextW(m_hwnd, IDC_REGION_HOTKEY_EDIT, HotkeyToString(m_config.regionHotkeyVk, m_config.regionHotkeyMod).c_str());
 
     UpdateCaptureModeUI();
 
@@ -982,6 +1069,11 @@ LRESULT CALLBACK SettingsWindow::HotkeyEditSubclassProc(HWND hWnd, UINT uMsg, WP
                     pThis->m_config.toggleWndVk = 0;
                     pThis->m_config.toggleWndMod = 0;
                 }
+                else if (uIdSubclass == IDC_REGION_HOTKEY_EDIT)
+                {
+                    pThis->m_config.regionHotkeyVk = 0;
+                    pThis->m_config.regionHotkeyMod = 0;
+                }
                 SetWindowTextW(hWnd, L"None");
             }
             else
@@ -1000,6 +1092,11 @@ LRESULT CALLBACK SettingsWindow::HotkeyEditSubclassProc(HWND hWnd, UINT uMsg, WP
                 {
                     pThis->m_config.toggleWndVk = vk;
                     pThis->m_config.toggleWndMod = mod;
+                }
+                else if (uIdSubclass == IDC_REGION_HOTKEY_EDIT)
+                {
+                    pThis->m_config.regionHotkeyVk = vk;
+                    pThis->m_config.regionHotkeyMod = mod;
                 }
                 SetWindowTextW(hWnd, SettingsWindow::HotkeyToString(vk, mod).c_str());
             }
@@ -1041,6 +1138,10 @@ LRESULT CALLBACK SettingsWindow::HotkeyEditSubclassProc(HWND hWnd, UINT uMsg, WP
                 {
                     s = SettingsWindow::HotkeyToString(pThis->m_config.toggleWndVk, pThis->m_config.toggleWndMod);
                 }
+                else if (uIdSubclass == IDC_REGION_HOTKEY_EDIT)
+                {
+                    s = SettingsWindow::HotkeyToString(pThis->m_config.regionHotkeyVk, pThis->m_config.regionHotkeyMod);
+                }
             }
             else
             {
@@ -1065,6 +1166,11 @@ LRESULT CALLBACK SettingsWindow::HotkeyEditSubclassProc(HWND hWnd, UINT uMsg, WP
         {
             SetWindowTextW(hWnd, SettingsWindow::HotkeyToString(pThis->m_config.toggleWndVk, pThis->m_config.toggleWndMod).c_str());
             pThis->RegisterToggleWndHotkey();
+        }
+        else if (uIdSubclass == IDC_REGION_HOTKEY_EDIT)
+        {
+            SetWindowTextW(hWnd, SettingsWindow::HotkeyToString(pThis->m_config.regionHotkeyVk, pThis->m_config.regionHotkeyMod).c_str());
+            pThis->RegisterRegionHotkey();
         }
         break;
     }
@@ -1165,6 +1271,34 @@ void SettingsWindow::UnregisterToggleWndHotkey()
     }
 }
 
+void SettingsWindow::RegisterRegionHotkey()
+{
+    UnregisterRegionHotkey();
+    if (m_config.regionHotkeyVk == 0)
+    {
+        UpdateStatus(L"No region selection hotkey configured.");
+        return;
+    }
+    if (RegisterHotKey(m_hwnd, HOTKEY_REGION_ID, m_config.regionHotkeyMod, m_config.regionHotkeyVk))
+    {
+        m_regionHotkeyRegistered = true;
+        UpdateStatus(L"Region selection hotkey registered: " + HotkeyToString(m_config.regionHotkeyVk, m_config.regionHotkeyMod));
+    }
+    else
+    {
+        UpdateStatus(L"Failed to register region selection hotkey: " + HotkeyToString(m_config.regionHotkeyVk, m_config.regionHotkeyMod));
+    }
+}
+
+void SettingsWindow::UnregisterRegionHotkey()
+{
+    if (m_regionHotkeyRegistered)
+    {
+        UnregisterHotKey(m_hwnd, HOTKEY_REGION_ID);
+        m_regionHotkeyRegistered = false;
+    }
+}
+
 void SettingsWindow::OnHotkey(int id)
 {
     if (id == HOTKEY_TOGGLE_WND_ID)
@@ -1183,6 +1317,12 @@ void SettingsWindow::OnHotkey(int id)
             SetForegroundWindow(m_hwnd);
         }
         SyncHelperWindows();
+        return;
+    }
+
+    if (id == HOTKEY_REGION_ID)
+    {
+        OnRegionHotkeyPressed();
         return;
     }
 
@@ -1486,4 +1626,120 @@ void SettingsWindow::SyncHelperWindows()
             m_overlay.Hide();
         }
     }
+}
+
+// -----------------------------------------------------------------------------
+//  Region selection trigger & execution
+// -----------------------------------------------------------------------------
+
+void SettingsWindow::OnRegionHotkeyPressed()
+{
+    UpdateStatus(L"Region hotkey pressed. Drag to select region...");
+    // Close current result overlay if any
+    m_regionResult.Hide();
+    // Show fullscreen transparent selection overlay
+    m_regionSelect.Show();
+}
+
+void SettingsWindow::PerformRegionCapture(const RECT& region)
+{
+    int rx = region.left;
+    int ry = region.top;
+    int rw = region.right - region.left;
+    int rh = region.bottom - region.top;
+
+    if (rw <= 0 || rh <= 0) return;
+
+    // GDI Screenshot of region
+    HDC hScreen = GetDC(nullptr);
+    HDC hMem = CreateCompatibleDC(hScreen);
+    HBITMAP hBmp = CreateCompatibleBitmap(hScreen, rw, rh);
+    HGDIOBJ hOld = SelectObject(hMem, hBmp);
+
+    BitBlt(hMem, 0, 0, rw, rh, hScreen, rx, ry, SRCCOPY);
+    SelectObject(hMem, hOld);
+    DeleteDC(hMem);
+    ReleaseDC(nullptr, hScreen);
+
+    // Convert HBITMAP to cv::Mat (BGRA)
+    cv::Mat mat(rh, rw, CV_8UC4);
+    BITMAPINFOHEADER bih{};
+    bih.biSize = sizeof(BITMAPINFOHEADER);
+    bih.biWidth = rw;
+    bih.biHeight = -rh; // Top-down
+    bih.biPlanes = 1;
+    bih.biBitCount = 32;
+    bih.biCompression = BI_RGB;
+
+    HDC hScreenDC = GetDC(nullptr);
+    GetDIBits(hScreenDC, hBmp, 0, rh, mat.data, reinterpret_cast<BITMAPINFO*>(&bih), DIB_RGB_COLORS);
+    ReleaseDC(nullptr, hScreenDC);
+
+    DeleteObject(hBmp);
+
+    // Convert BGRA to BGR
+    cv::Mat bgrMat;
+    cv::cvtColor(mat, bgrMat, cv::COLOR_BGRA2BGR);
+
+    // Lazy-initialize Region OCR engine
+    if (!m_regionOcr.IsInitialized())
+    {
+        wchar_t cwd[MAX_PATH] = { 0 };
+        GetCurrentDirectoryW(MAX_PATH, cwd);
+        std::wstring baseDir = cwd;
+        for (auto& c : baseDir)
+        {
+            if (c == L'\\') c = L'/';
+        }
+        if (!baseDir.empty() && baseDir.back() != L'/')
+        {
+            baseDir += L'/';
+        }
+        std::wstring detModelDir = baseDir + L"models/PP-OCRv5_mobile_det_infer";
+        std::wstring recModelDir = baseDir + L"models/PP-OCRv5_mobile_rec_infer";
+
+        UpdateStatus(L"Initializing OCR modules for region selection...");
+        if (!m_regionOcr.Initialize(detModelDir, recModelDir))
+        {
+            UpdateStatus(L"Region OCR Error: Failed to initialize models.");
+            return;
+        }
+        UpdateStatus(L"Region OCR modules initialized successfully.");
+    }
+
+    UpdateStatus(L"Performing OCR on selected region...");
+    DetectionResult detection = m_regionOcr.Detect(bgrMat);
+    if (detection.empty())
+    {
+        UpdateStatus(L"No text detected in selected region.");
+        return;
+    }
+
+    OcrResult ocrResult = m_regionOcr.Recognize(detection);
+    std::wstring ocrText = Utf8ToWide(ocrResult.ConcatText());
+    if (ocrText.empty())
+    {
+        UpdateStatus(L"No text recognized in selected region.");
+        return;
+    }
+
+    UpdateStatus(L"Translating: " + ocrText);
+    TextTranslateProvider client;
+    client.SetApiKey(m_config.apiKey);
+    client.SetApiModel(m_config.apiModel);
+    client.SetProvider(m_config.providerType);
+    client.SetTargetLanguage(m_config.targetLanguage);
+
+    std::wstring result = client.Translate(ocrText);
+    if (result.empty())
+    {
+        UpdateStatus(L"Translation API error: " + client.GetLastError());
+        return;
+    }
+
+    UpdateStatus(L"OK: " + result);
+
+    // Marshal window display to UI thread
+    auto* data = new RegionResultData{ region, result };
+    PostMessageW(m_hwnd, WM_SHOW_REGION_RESULT, 0, reinterpret_cast<LPARAM>(data));
 }

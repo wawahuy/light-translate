@@ -29,12 +29,14 @@ struct AppConfig
     // -- Scheduler / Capture mode ----------------------------------------------
     CaptureMode captureMode     = CaptureMode::Auto;
     int         captureIntervalMs = 1000; ///< Interval between auto-capture frames (ms)
-    UINT        hotkeyVk        = VK_F2;  ///< Virtual-key code for hotkey capture
-    UINT        hotkeyMod       = 0;      ///< Key modifiers (MOD_CONTROL, MOD_SHIFT, etc.)
-    UINT        pauseHotkeyVk   = VK_F3;  ///< Virtual-key code for pause hotkey
-    UINT        pauseHotkeyMod  = 0;      ///< Key modifiers for pause hotkey
-    UINT        toggleWndVk     = 'H';    ///< Virtual-key code for settings window hotkey
-    UINT        toggleWndMod    = MOD_CONTROL | MOD_SHIFT; ///< Key modifiers (Ctrl+Shift)
+    UINT        hotkeyVk        = 'N';    ///< Virtual-key code for hotkey capture (Ctrl + N)
+    UINT        hotkeyMod       = MOD_CONTROL;
+    UINT        pauseHotkeyVk   = 'P';    ///< Virtual-key code for pause hotkey (Ctrl + P)
+    UINT        pauseHotkeyMod  = MOD_CONTROL;
+    UINT        toggleWndVk     = 'O';    ///< Virtual-key code for settings window hotkey (Ctrl + Shift + O)
+    UINT        toggleWndMod    = MOD_CONTROL | MOD_SHIFT;
+    UINT        regionHotkeyVk  = 'M';    ///< Virtual-key code for region selection hotkey (Ctrl + M)
+    UINT        regionHotkeyMod = MOD_CONTROL;
 
     /// Returns the configured interval (used by Scheduler in Auto mode).
     [[nodiscard]] int GetIntervalMs() const noexcept

@@ -39,6 +39,7 @@
 #define IDC_API_MODEL_EDIT    1037   ///< Translate Model edit
 #define IDC_TAB_CTRL          1038   ///< Main tab control
 #define IDC_LANGUAGE_COMBO    1039   ///< Target language combo box
+#define IDC_REGION_HOTKEY_EDIT 1040  ///< Region selection hotkey
 
 // === Tray icon ===
 #define WM_TRAYICON           (WM_APP + 100)
@@ -50,3 +51,4 @@
 // === Custom window messages ===
 #define WM_OVERLAY_SETTEXT    (WM_APP + 1)   // LPARAM = wchar_t* (heap, caller frees)
 #define WM_UPDATE_STATUS      (WM_APP + 2)   // LPARAM = wchar_t* (heap, caller frees)
+#define WM_SHOW_REGION_RESULT (WM_APP + 3)   // LPARAM = RegionResultData* (heap, UI thread frees)
