@@ -1,5 +1,9 @@
 #include "src/Scheduler.h"
 #include "src/capture/CaptureEngine.h"
+#include "src/network/TextTranslateProvider.h"
+#include "src/utils/StringUtils.h"
+#include "overlay/OverlayWindow.h"
+#include <opencv2/imgproc.hpp>
 
 // Các hằng số WaitableTimer có thể chưa có trong MinGW-w64 cũ
 #ifndef CREATE_WAITABLE_TIMER_MANUAL_RESET
@@ -8,10 +12,6 @@
 #ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
 #  define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002UL
 #endif
-#include "src/network/TextTranslateProvider.h"
-#include "overlay/OverlayWindow.h"
-#include "utils/ImageEncoder.h"
-#include "utils/Hash.h"
 
 // ── Constructor / Destructor ──────────────────────────────────────────────────
 
@@ -39,18 +39,30 @@ bool Scheduler::Start(int intervalMs)
 {
     if (m_running.load()) return true;
 
+    wchar_t cwd[MAX_PATH] = { 0 };
+    GetCurrentDirectoryW(MAX_PATH, cwd);
+    std::wstring baseDir = cwd;
+    for (auto& c : baseDir)
+    {
+        if (c == L'\\') c = L'/';
+    }
+    if (!baseDir.empty() && baseDir.back() != L'/')
+    {
+        baseDir += L'/';
+    }
+
+    m_ocrDetModelDir = baseDir + L"models/PP-OCRv5_mobile_det_infer";
+    m_ocrRecModelDir = baseDir + L"models/PP-OCRv5_mobile_rec_infer";
+    m_lastOCRText.clear();
+
     m_intervalMs.store(intervalMs);
     m_shouldStop.store(false);
-    m_lastHash = 0;
+    m_diffDetector.Reset();
 
     // Manual-reset stop event (signalled on Stop())
     m_hStopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
 
     // High-resolution waitable timer (falls back to standard on older Windows)
-    // m_hTimer = CreateWaitableTimerExW(
-    //     nullptr, nullptr,
-    //     CREATE_WAITABLE_TIMER_MANUAL_RESET | CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
-    //     TIMER_ALL_ACCESS);
     m_hTimer = CreateWaitableTimerExW(
         nullptr, nullptr,
         CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
@@ -97,6 +109,8 @@ void Scheduler::Stop()
     if (m_hStopEvent) { CloseHandle(m_hStopEvent); m_hStopEvent = nullptr; }
 
     m_running.store(false);
+    m_ocrEngine.Reset();
+    m_diffDetector.Reset();
 }
 
 void Scheduler::SetIntervalMs(int ms)
@@ -127,10 +141,6 @@ void Scheduler::SchedulerProc()
 
         if (m_shouldStop.load()) break;
 
-        // Waitable timer is manual-reset – reset it immediately so the period
-        // continues from this point rather than the arming point.
-        // ResetEvent(m_hTimer);
-
         // Drop this tick if network is still busy
         if (m_networkBusy.load())
         {
@@ -144,45 +154,23 @@ void Scheduler::SchedulerProc()
         if (!m_capture->GetLatestFrame(frame)) continue;
         if (frame.data.empty())               continue;
 
-        // // Skip if frame is identical to last one (dirty-frame detection)
-        // uint64_t hash = XXHash64(frame.data.data(), frame.data.size());
-        // if (hash == m_lastHash)
-        // {
-        //     if (OnStatus) OnStatus(L"Skipped (frame unchanged)");
-        //     continue;
-        // }
-        // m_lastHash = hash;
-
-        // Encode ROI to JPEG at quality 75 %
-        std::vector<uint8_t> jpeg;
-        if (!EncodeBGRAtoJPEG(frame.data.data(), frame.width, frame.height, 75, jpeg))
-        {
-            if (OnStatus) OnStatus(L"JPEG encoding failed");
-            continue;
-        }
-        // if (OnStatus) OnStatus(L"Frame captured and encoded (" +
-        //     std::to_wstring(jpeg.size() / 1024) + L" KB)");
+        // Convert BGRA Mat to BGR Mat for PaddleOCR
+        cv::Mat currentMat(frame.height, frame.width, CV_8UC4, frame.data.data());
+        cv::Mat bgrMat;
+        cv::cvtColor(currentMat, bgrMat, cv::COLOR_BGRA2BGR);
 
         // Push to single-slot queue (replaces any pending frame)
         {
             std::lock_guard<std::mutex> lk(m_queueMutex);
-            m_pending = PendingFrame{ std::move(jpeg) };
+            m_pending = PendingFrame{ std::move(bgrMat) };
         }
         m_queueCV.notify_one();
 
-        if (OnStatus) OnStatus(L"Frame queued for translation...");
+        if (OnStatus) OnStatus(L"Frame queued for processing...");
     }
 }
 
-std::wstring Scheduler::MockOCR(const std::vector<uint8_t>& jpegData)
-{
-    // Placeholder function for OCR
-    // In the future, this will use PaddleOCR to perform OCR on the image.
-    // For now, return a mock string to translate.
-    return L"Hello world! This is a test message to translate.";
-}
-
-// -- Network thread ------------------------------------------------------------
+// ── Network thread ────────────────────────────────────────────────────────────
 
 void Scheduler::NetworkProc()
 {
@@ -209,21 +197,109 @@ void Scheduler::NetworkProc()
 
         m_networkBusy.store(true);
 
-        if (m_client)
+        // ── Lazy-initialize OCR engine ────────────────────────────────────
+        if (!m_ocrEngine.IsInitialized())
         {
-            std::wstring ocrText = MockOCR(pending.jpeg);
-            std::wstring result = m_client->Translate(ocrText);
-            if (!result.empty())
+            if (OnStatus) OnStatus(L"Initializing PaddleOCR modules...");
+            try
             {
-                // Update overlay (SetText is thread-safe – uses PostMessage internally)
-                if (m_overlay) m_overlay->SetText(result);
-                if (OnStatus)  OnStatus(L"OK: " + result);
+                if (!m_ocrEngine.Initialize(m_ocrDetModelDir, m_ocrRecModelDir))
+                {
+                    if (OnStatus) OnStatus(L"OCR Error: Model files not found in: " + m_ocrDetModelDir + L" or " + m_ocrRecModelDir);
+                    m_networkBusy.store(false);
+                    continue;
+                }
+                if (OnStatus) OnStatus(L"PaddleOCR modules initialized successfully.");
+            }
+            catch (const std::exception& e)
+            {
+                if (OnStatus) OnStatus(L"OCR Init Exception: " + Utf8ToWide(e.what()));
+                m_networkBusy.store(false);
+                continue;
+            }
+            catch (...)
+            {
+                if (OnStatus) OnStatus(L"OCR Init Unknown Exception occurred.");
+                m_networkBusy.store(false);
+                continue;
+            }
+        }
+
+        // ── Detect + Diff + Recognize + Translate ────────────────────────
+        try
+        {
+            // Phase 1: Detect text regions + crop
+            DetectionResult detection = m_ocrEngine.Detect(pending.frameMat);
+
+            // No text detected
+            if (detection.empty())
+            {
+                if (m_lastOCRText != L"")
+                {
+                    m_lastOCRText.clear();
+                    m_diffDetector.Reset();
+                    if (m_overlay) m_overlay->SetText(L"");
+                    if (OnStatus) OnStatus(L"Screen cleared (no text detected)");
+                }
+                else
+                {
+                    if (OnStatus) OnStatus(L"Skipped (no text detected)");
+                }
+                m_networkBusy.store(false);
+                continue;
+            }
+
+            // Check if text regions changed visually (before recognition)
+            if (!m_diffDetector.HasChanged(detection.regionGrays))
+            {
+                if (OnStatus) OnStatus(L"Skipped (text regions unchanged)");
+                m_networkBusy.store(false);
+                continue;
+            }
+            if (OnStatus) OnStatus(L"textRegionDiff = " + std::to_wstring(m_diffDetector.LastDiffValue()));
+
+            // Phase 2: Recognize text (only if regions changed)
+            OcrResult ocrResult = m_ocrEngine.Recognize(detection);
+
+            // Concatenate recognized text
+            std::wstring ocrText = Utf8ToWide(ocrResult.ConcatText());
+
+            // Translate if text changed
+            if (ocrText == m_lastOCRText)
+            {
+                if (OnStatus) OnStatus(L"Skipped (OCR text unchanged)");
             }
             else
             {
-                if (OnStatus)
-                    OnStatus(L"API error: " + m_client->GetLastError());
+                m_lastOCRText = ocrText;
+                if (ocrText.empty())
+                {
+                    if (m_overlay) m_overlay->SetText(L"");
+                    if (OnStatus) OnStatus(L"Screen cleared (no text detected)");
+                }
+                else if (m_client)
+                {
+                    if (OnStatus) OnStatus(L"Translating: " + ocrText);
+                    std::wstring result = m_client->Translate(ocrText);
+                    if (!result.empty())
+                    {
+                        if (m_overlay) m_overlay->SetText(result);
+                        if (OnStatus)  OnStatus(L"OK: " + result);
+                    }
+                    else
+                    {
+                        if (OnStatus) OnStatus(L"API error: " + m_client->GetLastError());
+                    }
+                }
             }
+        }
+        catch (const std::exception& e)
+        {
+            if (OnStatus) OnStatus(L"OCR/Translation Exception: " + Utf8ToWide(e.what()));
+        }
+        catch (...)
+        {
+            if (OnStatus) OnStatus(L"OCR/Translation Unknown Exception occurred.");
         }
 
         m_networkBusy.store(false);

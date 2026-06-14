@@ -10,26 +10,29 @@
 #include <functional>
 #include <string>
 #include <cstdint>
+#include <opencv2/core.hpp>
+#include "src/ocr/OcrEngine.h"
+#include "src/ocr/FrameDiffDetector.h"
 
 // Forward declarations
 class CaptureEngine;
 class TextTranslateProvider;
 class OverlayWindow;
 
-/// Coordinates the capture -> hash -> encode -> HTTP -> overlay pipeline.
+/// Coordinates the capture -> OCR -> translate -> overlay pipeline.
 ///
 /// Thread model
 /// -------------
 ///  Scheduler thread  - woken by a WaitableTimer at the configured interval.
-///                      Reads the latest frame, checks xxHash, encodes JPEG,
+///                      Reads the latest frame, converts to BGR,
 ///                      and pushes to the single-slot frame queue.
 ///
-///  Network thread    - blocks on the queue; sends HTTP POST, updates overlay.
+///  Network thread    - blocks on the queue; runs OCR, translates, updates overlay.
 ///
 /// CPU-saving features
 /// --------------------
 ///  - WaitableTimer (never polls with Sleep).
-///  - xxHash dirty-frame detection (skip if screen unchanged).
+///  - Text-region diff detection (skip if screen text unchanged).
 ///  - Single-slot queue: if network is busy the new frame is dropped, not queued.
 ///  - Network busy flag prevents scheduling new requests while one is running.
 class Scheduler
@@ -58,7 +61,7 @@ public:
     std::function<void(const std::wstring&)> OnStatus;
 
 private:
-    std::wstring MockOCR(const std::vector<uint8_t>& jpegData);
+
     void SchedulerProc();
     void NetworkProc();
 
@@ -77,11 +80,17 @@ private:
     std::atomic<int>  m_intervalMs { 1000 };
 
     // -- Single-slot frame queue -----------------------------------------------
-    struct PendingFrame { std::vector<uint8_t> jpeg; };
+    struct PendingFrame { cv::Mat frameMat; };
     std::optional<PendingFrame> m_pending;
     std::mutex                  m_queueMutex;
     std::condition_variable     m_queueCV;
 
     std::atomic<bool>  m_networkBusy{ false };
-    uint64_t           m_lastHash = 0;          // dirty-frame detection
+
+    // -- OCR pipeline ----------------------------------------------------------
+    OcrEngine         m_ocrEngine;
+    FrameDiffDetector m_diffDetector;
+    std::wstring      m_ocrDetModelDir;
+    std::wstring      m_ocrRecModelDir;
+    std::wstring      m_lastOCRText;
 };

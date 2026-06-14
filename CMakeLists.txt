@@ -227,9 +227,12 @@ if(UNIX)
 endif()
 
 file(GLOB_RECURSE HEADER_LIST
-  "./src/*.h"
-  "./src/*.hpp"
+    "${CMAKE_SOURCE_DIR}/src/*.h"
+    "${CMAKE_SOURCE_DIR}/src/*.hpp"
 )
+
+list(FILTER HEADER_LIST EXCLUDE REGEX ".*/src/paddleocr/.*")
+
 file(GLOB_RECURSE SRC_LIST
   "./src/*.cc"
   "./src/*.cpp"
