@@ -36,6 +36,7 @@ private:
     void CreateControls();
     void CreateRealtimeTab(int x, int y, int w);
     void CreateTranslateTab(int x, int y, int w);
+    void CreateSystemTab(int x, int y, int w);
     HWND MakeLabel (int x, int y, int w, int h, const wchar_t* txt);
     HWND MakeEdit  (int x, int y, int w, int h, UINT id, bool multiLine = false);
     HWND MakeButton(int x, int y, int w, int h, const wchar_t* txt, UINT id);
@@ -75,9 +76,12 @@ private:
     void UnregisterCaptureHotkey();
     void RegisterPauseHotkey();
     void UnregisterPauseHotkey();
+    void RegisterToggleWndHotkey();
+    void UnregisterToggleWndHotkey();
     void OnHotkey(int id);
     static const int HOTKEY_CAPTURE_ID = 1;
     static const int HOTKEY_PAUSE_ID = 2;
+    static const int HOTKEY_TOGGLE_WND_ID = 3;
     static LRESULT CALLBACK HotkeyEditSubclassProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
 
     // -- System tray -----------------------------------------------------------
@@ -97,12 +101,14 @@ private:
     bool        m_running   = false;
     bool        m_hotkeyRegistered = false;
     bool        m_pauseHotkeyRegistered = false;
+    bool        m_toggleWndHotkeyRegistered = false;
 
     // Tab control
     HWND                  m_tabCtrl = nullptr;
     int                   m_currentTab = 0;
     std::vector<HWND>     m_realtimeControls;    ///< Controls on "Realtime" tab
     std::vector<HWND>     m_translateControls;   ///< Controls on "Translate" tab
+    std::vector<HWND>     m_systemControls;      ///< Controls on "System" tab
 
     // Capture mode sub-controls (conditionally shown within Realtime tab)
     std::vector<HWND>     m_autoModeControls;    ///< Interval edit (Auto mode)

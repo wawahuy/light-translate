@@ -63,6 +63,8 @@ void AppConfig::Save(const std::wstring& iniPath) const
     WriteInt(L"Capture", L"HotkeyMod", static_cast<int>(hotkeyMod), f);
     WriteInt(L"Capture", L"PauseHotkeyVk",  static_cast<int>(pauseHotkeyVk), f);
     WriteInt(L"Capture", L"PauseHotkeyMod", static_cast<int>(pauseHotkeyMod), f);
+    WriteInt(L"Capture", L"ToggleWndVk",  static_cast<int>(toggleWndVk), f);
+    WriteInt(L"Capture", L"ToggleWndMod", static_cast<int>(toggleWndMod), f);
 
     WriteInt(L"Overlay", L"X",       overlayPos.x, f);
     WriteInt(L"Overlay", L"Y",       overlayPos.y, f);
@@ -104,6 +106,8 @@ bool AppConfig::Load(const std::wstring& iniPath)
     hotkeyMod          = static_cast<UINT>(ReadInt(L"Capture", L"HotkeyMod", 0, f));
     pauseHotkeyVk      = static_cast<UINT>(ReadInt(L"Capture", L"PauseHotkeyVk", VK_F3, f));
     pauseHotkeyMod     = static_cast<UINT>(ReadInt(L"Capture", L"PauseHotkeyMod", 0, f));
+    toggleWndVk        = static_cast<UINT>(ReadInt(L"Capture", L"ToggleWndVk", 'H', f));
+    toggleWndMod       = static_cast<UINT>(ReadInt(L"Capture", L"ToggleWndMod", MOD_CONTROL | MOD_SHIFT, f));
 
     overlayPos.x = ReadInt(L"Overlay", L"X", 100, f);
     overlayPos.y = ReadInt(L"Overlay", L"Y", 100, f);

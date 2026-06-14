@@ -32,6 +32,8 @@ struct AppConfig
     UINT        hotkeyMod       = 0;      ///< Key modifiers (MOD_CONTROL, MOD_SHIFT, etc.)
     UINT        pauseHotkeyVk   = VK_F3;  ///< Virtual-key code for pause hotkey
     UINT        pauseHotkeyMod  = 0;      ///< Key modifiers for pause hotkey
+    UINT        toggleWndVk     = 'H';    ///< Virtual-key code for settings window hotkey
+    UINT        toggleWndMod    = MOD_CONTROL | MOD_SHIFT; ///< Key modifiers (Ctrl+Shift)
 
     /// Returns the configured interval (used by Scheduler in Auto mode).
     [[nodiscard]] int GetIntervalMs() const noexcept

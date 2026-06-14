@@ -22,6 +22,7 @@ SettingsWindow::~SettingsWindow()
 {
     UnregisterCaptureHotkey();
     UnregisterPauseHotkey();
+    UnregisterToggleWndHotkey();
     RemoveTrayIcon();
 }
 
@@ -144,6 +145,9 @@ LRESULT SettingsWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
         // Populate controls with loaded config
         ConfigToUI();
 
+        // Register settings window toggle hotkey (active globally while app is open)
+        RegisterToggleWndHotkey();
+
         // Show helper windows if Settings is visible
         SyncHelperWindows();
 
@@ -263,6 +267,7 @@ LRESULT SettingsWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
         OnStop();
         UnregisterCaptureHotkey();
         UnregisterPauseHotkey();
+        UnregisterToggleWndHotkey();
         m_captureHelper.Destroy();
         m_overlay.Destroy();
         RemoveTrayIcon();
@@ -363,6 +368,9 @@ void SettingsWindow::CreateControls()
     tie.pszText = const_cast<wchar_t*>(L"Translate");
     TabCtrl_InsertItem(m_tabCtrl, 1, &tie);
 
+    tie.pszText = const_cast<wchar_t*>(L"System");
+    TabCtrl_InsertItem(m_tabCtrl, 2, &tie);
+
     // Get the display area inside the tab control
     RECT tabRect{};
     GetClientRect(m_tabCtrl, &tabRect);
@@ -375,6 +383,7 @@ void SettingsWindow::CreateControls()
     // Create controls for each tab
     CreateRealtimeTab(tabX, tabY, tabW);
     CreateTranslateTab(tabX, tabY, tabW);
+    CreateSystemTab(tabX, tabY, tabW);
 
     // Show the first tab (Realtime) by default
     ShowTab(0);
@@ -579,6 +588,28 @@ void SettingsWindow::CreateTranslateTab(int x, int y, int w)
     m_translateControls.push_back(h);
 }
 
+void SettingsWindow::CreateSystemTab(int x, int y, int w)
+{
+    const int LH = 22;
+    const int EH = 24;
+    HWND h;
+
+    int cy = y + 4;
+
+    // -- System Hotkeys group --------------------------------------------------
+    h = MakeGroup(x, cy, w, 100, L"  System Hotkeys  ");
+    m_systemControls.push_back(h);
+    cy += 18;
+
+    h = MakeLabel(x + 8, cy, 180, LH, L"Toggle Settings Window:");
+    m_systemControls.push_back(h);
+
+    h = MakeEdit(x + 195, cy, 140, EH, IDC_TOGGLE_WND_HOTKEY_EDIT);
+    SetWindowTextW(h, L"Ctrl + Shift + H");
+    SetWindowSubclass(h, HotkeyEditSubclassProc, IDC_TOGGLE_WND_HOTKEY_EDIT, reinterpret_cast<DWORD_PTR>(this));
+    m_systemControls.push_back(h);
+}
+
 // -----------------------------------------------------------------------------
 //  Tab switching
 // -----------------------------------------------------------------------------
@@ -593,15 +624,19 @@ void SettingsWindow::ShowTab(int index)
 {
     m_currentTab = index;
 
-    // Tab 0 = Realtime, Tab 1 = Translate
+    // Tab 0 = Realtime, Tab 1 = Translate, Tab 2 = System
     int showRealtime  = (index == 0) ? SW_SHOW : SW_HIDE;
     int showTranslate = (index == 1) ? SW_SHOW : SW_HIDE;
+    int showSystem    = (index == 2) ? SW_SHOW : SW_HIDE;
 
     for (HWND h : m_realtimeControls)
         ShowWindow(h, showRealtime);
 
     for (HWND h : m_translateControls)
         ShowWindow(h, showTranslate);
+
+    for (HWND h : m_systemControls)
+        ShowWindow(h, showSystem);
 
     // If showing Realtime tab, also apply capture mode visibility
     if (index == 0)
@@ -660,6 +695,7 @@ void SettingsWindow::ConfigToUI()
     // Hotkey
     SetDlgItemTextW(m_hwnd, IDC_HOTKEY_EDIT, HotkeyToString(m_config.hotkeyVk, m_config.hotkeyMod).c_str());
     SetDlgItemTextW(m_hwnd, IDC_PAUSE_HOTKEY_EDIT, HotkeyToString(m_config.pauseHotkeyVk, m_config.pauseHotkeyMod).c_str());
+    SetDlgItemTextW(m_hwnd, IDC_TOGGLE_WND_HOTKEY_EDIT, HotkeyToString(m_config.toggleWndVk, m_config.toggleWndMod).c_str());
 
     UpdateCaptureModeUI();
 
@@ -900,6 +936,11 @@ LRESULT CALLBACK SettingsWindow::HotkeyEditSubclassProc(HWND hWnd, UINT uMsg, WP
                     pThis->m_config.pauseHotkeyVk = 0;
                     pThis->m_config.pauseHotkeyMod = 0;
                 }
+                else if (uIdSubclass == IDC_TOGGLE_WND_HOTKEY_EDIT)
+                {
+                    pThis->m_config.toggleWndVk = 0;
+                    pThis->m_config.toggleWndMod = 0;
+                }
                 SetWindowTextW(hWnd, L"None");
             }
             else
@@ -913,6 +954,11 @@ LRESULT CALLBACK SettingsWindow::HotkeyEditSubclassProc(HWND hWnd, UINT uMsg, WP
                 {
                     pThis->m_config.pauseHotkeyVk = vk;
                     pThis->m_config.pauseHotkeyMod = mod;
+                }
+                else if (uIdSubclass == IDC_TOGGLE_WND_HOTKEY_EDIT)
+                {
+                    pThis->m_config.toggleWndVk = vk;
+                    pThis->m_config.toggleWndMod = mod;
                 }
                 SetWindowTextW(hWnd, SettingsWindow::HotkeyToString(vk, mod).c_str());
             }
@@ -950,6 +996,10 @@ LRESULT CALLBACK SettingsWindow::HotkeyEditSubclassProc(HWND hWnd, UINT uMsg, WP
                 {
                     s = SettingsWindow::HotkeyToString(pThis->m_config.pauseHotkeyVk, pThis->m_config.pauseHotkeyMod);
                 }
+                else if (uIdSubclass == IDC_TOGGLE_WND_HOTKEY_EDIT)
+                {
+                    s = SettingsWindow::HotkeyToString(pThis->m_config.toggleWndVk, pThis->m_config.toggleWndMod);
+                }
             }
             else
             {
@@ -969,6 +1019,11 @@ LRESULT CALLBACK SettingsWindow::HotkeyEditSubclassProc(HWND hWnd, UINT uMsg, WP
         else if (uIdSubclass == IDC_PAUSE_HOTKEY_EDIT)
         {
             SetWindowTextW(hWnd, SettingsWindow::HotkeyToString(pThis->m_config.pauseHotkeyVk, pThis->m_config.pauseHotkeyMod).c_str());
+        }
+        else if (uIdSubclass == IDC_TOGGLE_WND_HOTKEY_EDIT)
+        {
+            SetWindowTextW(hWnd, SettingsWindow::HotkeyToString(pThis->m_config.toggleWndVk, pThis->m_config.toggleWndMod).c_str());
+            pThis->RegisterToggleWndHotkey();
         }
         break;
     }
@@ -1041,8 +1096,55 @@ void SettingsWindow::UnregisterPauseHotkey()
     }
 }
 
+void SettingsWindow::RegisterToggleWndHotkey()
+{
+    UnregisterToggleWndHotkey();
+    if (m_config.toggleWndVk == 0)
+    {
+        UpdateStatus(L"No toggle window hotkey configured.");
+        return;
+    }
+    if (RegisterHotKey(m_hwnd, HOTKEY_TOGGLE_WND_ID, m_config.toggleWndMod, m_config.toggleWndVk))
+    {
+        m_toggleWndHotkeyRegistered = true;
+        UpdateStatus(L"Window toggle hotkey registered: " + HotkeyToString(m_config.toggleWndVk, m_config.toggleWndMod));
+    }
+    else
+    {
+        UpdateStatus(L"Failed to register window toggle hotkey: " + HotkeyToString(m_config.toggleWndVk, m_config.toggleWndMod));
+    }
+}
+
+void SettingsWindow::UnregisterToggleWndHotkey()
+{
+    if (m_toggleWndHotkeyRegistered)
+    {
+        UnregisterHotKey(m_hwnd, HOTKEY_TOGGLE_WND_ID);
+        m_toggleWndHotkeyRegistered = false;
+    }
+}
+
 void SettingsWindow::OnHotkey(int id)
 {
+    if (id == HOTKEY_TOGGLE_WND_ID)
+    {
+        if (IsWindowVisible(m_hwnd) && !IsIconic(m_hwnd))
+        {
+            // Currently visible, hide/minimize it
+            AddTrayIcon();
+            ShowWindow(m_hwnd, SW_HIDE);
+        }
+        else
+        {
+            // Currently hidden/minimized, show/restore it
+            RemoveTrayIcon();
+            ShowWindow(m_hwnd, SW_RESTORE);
+            SetForegroundWindow(m_hwnd);
+        }
+        SyncHelperWindows();
+        return;
+    }
+
     if (!m_running) return;
 
     if (id == HOTKEY_CAPTURE_ID)

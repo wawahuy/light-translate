@@ -17,6 +17,7 @@
 #define IDC_INTERVAL_EDIT     1016   ///< Interval in ms (Auto mode)
 #define IDC_HOTKEY_EDIT       1017   ///< Hotkey display (Hotkey mode)
 #define IDC_PAUSE_HOTKEY_EDIT 1018   ///< Pause hotkey (Auto mode)
+#define IDC_TOGGLE_WND_HOTKEY_EDIT 1019   ///< Toggle Settings window hotkey
 
 #define IDC_STATIC_OVERLAY    1020
 #define IDC_OVERLAY_POS_LABEL 1021   ///< Read-only "X: …  Y: …" label
