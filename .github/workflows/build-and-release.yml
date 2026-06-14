@@ -1,0 +1,103 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-and-release:
+    name: Build and Release
+    runs-on: windows-2022
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        id: cache-deps
+        with:
+          path: |
+            opencv
+            paddle_inference_extracted
+          key: deps-opencv4.7-paddle3.0-v1
+
+      - name: Download and Extract OpenCV 4.7.0
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          echo "Downloading OpenCV 4.7.0..."
+          Invoke-WebRequest -Uri "https://github.com/opencv/opencv/releases/download/4.7.0/opencv-4.7.0-windows.exe" -OutFile "opencv-4.7.0-windows.exe"
+          echo "Extracting OpenCV 4.7.0..."
+          7z x opencv-4.7.0-windows.exe -oopencv
+
+      - name: Download and Extract Paddle Inference 3.0.0
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          echo "Downloading Paddle Inference 3.0.0..."
+          Invoke-WebRequest -Uri "https://paddle-inference-lib.bj.bcebos.com/3.0.0/cxx_c/Windows/CPU/x86-64_avx-mkl-vs2019/paddle_inference.zip" -OutFile "paddle_inference.zip"
+          echo "Extracting Paddle Inference 3.0.0..."
+          7z x paddle_inference.zip -opaddle_inference_extracted
+
+      - name: Configure CMake
+        shell: pwsh
+        run: |
+          cmake -B build -S . -G "Visual Studio 17 2022" -A x64 `
+            -DOPENCV_DIR="${{ github.workspace }}/opencv/opencv/build" `
+            -DPADDLE_LIB="${{ github.workspace }}/paddle_inference_extracted/paddle_inference" `
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        shell: pwsh
+        run: |
+          cmake --build build --config Release
+
+      - name: Package Release
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path "light_translate_release"
+          
+          # Copy binary
+          Copy-Item -Path "build/Release/light_translate.exe" -Destination "light_translate_release/"
+          
+          # 1. Copy paddle_inference.dll
+          Copy-Item -Path "paddle_inference_extracted/paddle_inference/paddle/lib/paddle_inference.dll" -Destination "light_translate_release/"
+          
+          # 2. Copy common.dll
+          Copy-Item -Path "paddle_inference_extracted/paddle_inference/paddle/lib/common.dll" -Destination "light_translate_release/"
+          
+          # 3. Copy abseil_dll.dll
+          Copy-Item -Path "build/bin/Release/abseil_dll.dll" -Destination "light_translate_release/"
+          
+          # 4. Copy polyclipping.dll
+          Copy-Item -Path "build/third_party/clipper_ver6.4.2/cpp/Release/polyclipping.dll" -Destination "light_translate_release/"
+          
+          # 5. Copy opencv_world470.dll
+          Copy-Item -Path "opencv/opencv/build/x64/vc16/bin/opencv_world470.dll" -Destination "light_translate_release/"
+          
+          # Copy MKL DLLs directly from source paths for robustness
+          Copy-Item -Path "paddle_inference_extracted/paddle_inference/third_party/install/mklml/lib/mklml.dll" -Destination "light_translate_release/"
+          Copy-Item -Path "paddle_inference_extracted/paddle_inference/third_party/install/mklml/lib/libiomp5md.dll" -Destination "light_translate_release/"
+          
+          # Check and copy mkldnn.dll if it exists (onednn path)
+          $mkldnnPath = "paddle_inference_extracted/paddle_inference/third_party/install/onednn/lib/mkldnn.dll"
+          if (Test-Path $mkldnnPath) {
+              Copy-Item -Path $mkldnnPath -Destination "light_translate_release/"
+          }
+          
+          # Zip the release folder
+          Compress-Archive -Path "light_translate_release/*" -DestinationPath "light-translate-windows-x64.zip"
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: light-translate-windows-x64.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
