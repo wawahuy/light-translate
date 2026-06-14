@@ -85,8 +85,12 @@ jobs:
         run: |
           cmake -B build -S . -G "Visual Studio 17 2022" -A x64 `
             -DOPENCV_DIR="${{ github.workspace }}/opencv/opencv/build" `
+            -DOpenCV_DIR="${{ github.workspace }}/opencv/opencv/build" `
             -DPADDLE_LIB="${{ github.workspace }}/paddle_inference_extracted" `
-            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_BUILD_TYPE=Release `
+            -DBUILD_SHARED_LIBS=ON `
+            -DWITH_MKL=ON `
+            -DWITH_STATIC_LIB=ON
 
       - name: Build
         shell: pwsh
@@ -121,11 +125,8 @@ jobs:
           Copy-Item -Path "paddle_inference_extracted/third_party/install/mklml/lib/mklml.dll" -Destination "light_translate_release/"
           Copy-Item -Path "paddle_inference_extracted/third_party/install/mklml/lib/libiomp5md.dll" -Destination "light_translate_release/"
           
-          # Check and copy mkldnn.dll if it exists (onednn path)
-          $mkldnnPath = "paddle_inference_extracted/third_party/install/onednn/lib/mkldnn.dll"
-          if (Test-Path $mkldnnPath) {
-              Copy-Item -Path $mkldnnPath -Destination "light_translate_release/"
-          }
+          # Check and copy mkldnn.dll
+          Copy-Item -Path "paddle_inference_extracted/third_party/install/onednn/lib/mkldnn.dll" -Destination "light_translate_release/"
           
           # Download and extract PP-OCRv5 Mobile Detection Model
           echo "Downloading Detection Model..."
