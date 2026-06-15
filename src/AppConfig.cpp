@@ -57,6 +57,7 @@ void AppConfig::Save(const std::wstring& iniPath) const
     WriteInt(L"Capture", L"Right",   captureRect.right,  f);
     WriteInt(L"Capture", L"Bottom",  captureRect.bottom, f);
     WriteInt(L"Capture", L"Set",     captureSet   ? 1 : 0, f);
+    WriteInt(L"Capture", L"ScaleRoi", scaleRoi, f);
     WriteInt(L"Capture", L"Monitor", monitorIndex, f);
     WriteInt(L"Capture", L"Mode",    static_cast<int>(captureMode), f);
     WriteInt(L"Capture", L"IntervalMs", captureIntervalMs, f);
@@ -105,6 +106,7 @@ bool AppConfig::Load(const std::wstring& iniPath)
     captureRect.right  = ReadInt(L"Capture", L"Right",   800, f);
     captureRect.bottom = ReadInt(L"Capture", L"Bottom",  100, f);
     captureSet         = ReadInt(L"Capture", L"Set",     0,   f) != 0;
+    scaleRoi           = ReadInt(L"Capture", L"ScaleRoi", 50, f);
     monitorIndex       = ReadInt(L"Capture", L"Monitor", 0,   f);
     captureMode        = static_cast<CaptureMode>(ReadInt(L"Capture", L"Mode", 0, f));
     captureIntervalMs  = ReadInt(L"Capture", L"IntervalMs", 1000, f);

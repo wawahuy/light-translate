@@ -57,6 +57,9 @@ public:
     /// Trigger a single capture cycle (used in Hotkey mode).
     void TriggerOnce();
 
+    /// Set the Scale ROI factor (in percentage)
+    void SetScaleRoi(int scaleRoi);
+
     /// Pause/Resume the scheduler (used in Auto mode).
     void SetPaused(bool paused);
     bool IsPaused() const { return m_paused.load(); }
@@ -87,6 +90,7 @@ private:
     HANDLE            m_hStopEvent = nullptr;       // signals threads to exit
     HANDLE            m_hTriggerEvent = nullptr;    // manual trigger event (Hotkey mode)
     std::atomic<int>  m_intervalMs { 1000 };
+    std::atomic<int>  m_scaleRoi { 100 };
 
     // -- Single-slot frame queue -----------------------------------------------
     struct PendingFrame { cv::Mat frameMat; };

@@ -143,6 +143,11 @@ void Scheduler::SetIntervalMs(int ms)
     }
 }
 
+void Scheduler::SetScaleRoi(int scaleRoi)
+{
+    m_scaleRoi.store(scaleRoi);
+}
+
 void Scheduler::TriggerOnce()
 {
     if (m_hTriggerEvent)
@@ -216,6 +221,16 @@ void Scheduler::SchedulerProc()
         cv::Mat currentMat(frame.height, frame.width, CV_8UC4, frame.data.data());
         cv::Mat bgrMat;
         cv::cvtColor(currentMat, bgrMat, cv::COLOR_BGRA2BGR);
+
+        // Scale ROI if needed (default 100%)
+        int scalePct = m_scaleRoi.load();
+        if (scalePct > 0 && scalePct != 100)
+        {
+            double factor = scalePct / 100.0;
+            cv::Mat scaledMat;
+            cv::resize(bgrMat, scaledMat, cv::Size(), factor, factor, cv::INTER_LINEAR);
+            bgrMat = std::move(scaledMat);
+        }
 
         // Push to single-slot queue (replaces any pending frame)
         {

@@ -40,6 +40,7 @@
 #define IDC_TAB_CTRL          1038   ///< Main tab control
 #define IDC_LANGUAGE_COMBO    1039   ///< Target language combo box
 #define IDC_REGION_HOTKEY_EDIT 1040  ///< Region selection hotkey
+#define IDC_SCALE_ROI_EDIT     1041  ///< Scale ROI in percentage
 
 // === Tray icon ===
 #define WM_TRAYICON           (WM_APP + 100)

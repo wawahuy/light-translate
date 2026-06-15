@@ -424,7 +424,7 @@ void SettingsWindow::CreateControls()
     // -- Tab Control -----------------------------------------------------------
     m_tabCtrl = CreateWindowExW(0, WC_TABCONTROLW, L"",
         WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | TCS_TABS,
-        M, y, W, 370,
+        M, y, W, 400,
         m_hwnd,
         reinterpret_cast<HMENU>(static_cast<UINT_PTR>(IDC_TAB_CTRL)),
         m_hInstance, nullptr);
@@ -463,7 +463,7 @@ void SettingsWindow::CreateControls()
     // Show the first tab (Realtime) by default
     ShowTab(0);
 
-    y += 378;   // below tab control
+    y += 408;   // below tab control
 
     // -- Start / Stop (always visible) -----------------------------------------
     MakeButton(M, y, 120, 36, L"\u25B6  START", IDC_START_BTN);
@@ -498,7 +498,7 @@ void SettingsWindow::CreateRealtimeTab(int x, int y, int w)
     int cy = y + 4;
 
     // -- Capture Settings group ------------------------------------------------
-    h = MakeGroup(x, cy, w, 155, L"  Capture Settings  ");
+    h = MakeGroup(x, cy, w, 185, L"  Capture Settings  ");
     m_realtimeControls.push_back(h);
     cy += 18;
 
@@ -536,6 +536,14 @@ void SettingsWindow::CreateRealtimeTab(int x, int y, int w)
         SendMessageW(hMode, CB_SETCURSEL, 0, 0);
         m_realtimeControls.push_back(hMode);
     }
+    cy += EH + 6;
+
+    // Scale ROI input
+    h = MakeLabel(x + 8, cy, 100, LH, L"Scale ROI (%):");
+    m_realtimeControls.push_back(h);
+    h = MakeEdit(x + 110, cy, 70, EH, IDC_SCALE_ROI_EDIT);
+    SetWindowTextW(h, L"50");
+    m_realtimeControls.push_back(h);
     cy += EH + 6;
 
     // Auto mode: interval in ms & pause hotkey
@@ -845,6 +853,10 @@ void SettingsWindow::ConfigToUI()
     SetDlgItemInt(m_hwnd, IDC_INTERVAL_EDIT,
         static_cast<UINT>(m_config.captureIntervalMs), FALSE);
 
+    // Scale ROI
+    SetDlgItemInt(m_hwnd, IDC_SCALE_ROI_EDIT,
+        static_cast<UINT>(m_config.scaleRoi), FALSE);
+
     // Hotkey
     SetDlgItemTextW(m_hwnd, IDC_HOTKEY_EDIT, HotkeyToString(m_config.hotkeyVk, m_config.hotkeyMod).c_str());
     SetDlgItemTextW(m_hwnd, IDC_PAUSE_HOTKEY_EDIT, HotkeyToString(m_config.pauseHotkeyVk, m_config.pauseHotkeyMod).c_str());
@@ -905,6 +917,11 @@ void SettingsWindow::UIToConfig()
     m_config.captureIntervalMs = static_cast<int>(
         GetDlgItemInt(m_hwnd, IDC_INTERVAL_EDIT, &ok, FALSE));
     if (m_config.captureIntervalMs <= 0) m_config.captureIntervalMs = 1000;
+
+    // Scale ROI
+    m_config.scaleRoi = static_cast<int>(
+        GetDlgItemInt(m_hwnd, IDC_SCALE_ROI_EDIT, &ok, FALSE));
+    if (m_config.scaleRoi <= 0) m_config.scaleRoi = 100;
 
     // Hotkey: m_config.hotkeyVk and m_config.hotkeyMod are updated directly in real time by the subclass proc.
 
@@ -1449,6 +1466,7 @@ void SettingsWindow::OnStart()
 
     // Start based on capture mode
     m_scheduler.SetComponents(&m_capture, &m_client, &m_overlay);
+    m_scheduler.SetScaleRoi(m_config.scaleRoi);
 
     if (m_config.captureMode == CaptureMode::Auto)
     {
