@@ -30,6 +30,7 @@ Key CMake options:
 | `WITH_MKL` | `ON` | Use Intel MKL for math acceleration |
 | `WITH_STATIC_LIB` | `ON` | Statically link Paddle Inference |
 | `USE_FREETYPE` | `OFF` | Enable OpenCV FreeType for text rendering |
+| `BUILD_SHARED_LIBS` | `ON` | Build shared libraries |
 
 ---
 
