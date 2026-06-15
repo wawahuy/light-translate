@@ -13,6 +13,7 @@ struct DetectionResult
 {
     std::vector<cv::Mat> croppedTexts;  ///< Cropped text region images (BGR)
     std::vector<cv::Mat> regionGrays;   ///< Grayscale of each crop (for diff detection)
+    std::vector<std::vector<cv::Point2f>> boxes; ///< Polygons of detected text boxes (sorted)
 
     bool empty() const { return croppedTexts.empty(); }
 };

@@ -12,7 +12,7 @@
 #include <cstdint>
 #include <opencv2/core.hpp>
 #include "src/ocr/OcrEngine.h"
-#include "src/ocr/FrameDiffDetector.h"
+#include "src/ocr/BoxDiffDetector.h"
 
 // Forward declarations
 class CaptureEngine;
@@ -98,7 +98,7 @@ private:
 
     // -- OCR pipeline ----------------------------------------------------------
     OcrEngine         m_ocrEngine;
-    FrameDiffDetector m_diffDetector;
+    BoxDiffDetector   m_boxDiffDetector;
     std::wstring      m_ocrDetModelDir;
     std::wstring      m_ocrRecModelDir;
     std::wstring      m_lastOCRText;

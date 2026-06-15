@@ -91,6 +91,7 @@ DetectionResult OcrEngine::Detect(const cv::Mat& bgrFrame)
         return result;  // crop failed
 
     result.croppedTexts = cropResult.value();
+    result.boxes = dt_polys;
 
     // Build grayscale crops for diff detection
     result.regionGrays.reserve(result.croppedTexts.size());

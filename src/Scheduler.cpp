@@ -61,7 +61,7 @@ bool Scheduler::Start(int intervalMs)
     m_intervalMs.store(intervalMs);
     m_shouldStop.store(false);
     m_paused.store(false);
-    m_diffDetector.Reset();
+    m_boxDiffDetector.Reset();
 
     // Manual-reset stop event (signalled on Stop())
     m_hStopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
@@ -128,7 +128,7 @@ void Scheduler::Stop()
 
     m_running.store(false);
     m_ocrEngine.Reset();
-    m_diffDetector.Reset();
+    m_boxDiffDetector.Reset();
 }
 
 void Scheduler::SetIntervalMs(int ms)
@@ -286,100 +286,117 @@ void Scheduler::NetworkProc()
         // ── Detect + Diff + Recognize + Translate ────────────────────────
         try
         {
-            // Phase 1: Detect text regions + crop
-            DetectionResult detection = m_ocrEngine.Detect(pending.frameMat);
-
-            // No text detected
-            if (detection.empty())
+            bool shouldDetect = true;
+            if (m_boxDiffDetector.HasSavedBoxes())
             {
-                ULONGLONG now = GetTickCount64();
-                ULONGLONG limit = static_cast<ULONGLONG>(m_intervalMs.load()) + 1000;
-                if (now - m_lastSeenTime > limit)
+                if (!m_boxDiffDetector.DetectChange(pending.frameMat, 1.0))
                 {
-                    m_translationHistory.clear();
-                    m_lastOCRText.clear();
-                    m_diffDetector.Reset();
-                    if (m_overlay) m_overlay->SetText(L"");
-                    if (OnStatus) OnStatus(L"Screen cleared (no text detected + timeout)");
+                    shouldDetect = false;
+                    m_lastSeenTime = GetTickCount64();
+                    if (OnStatus) OnStatus(L"Skipped (Box regions unchanged)");
                 }
-                else
-                {
-                    if (OnStatus) OnStatus(L"No text detected, keeping overlay (timeout pending)");
-                }
-                m_networkBusy.store(false);
-                continue;
             }
 
-            // Phase 2: Recognize text
-            OcrResult ocrResult = m_ocrEngine.Recognize(detection);
-
-            // Concatenate recognized text
-            std::wstring ocrText = Utf8ToWide(ocrResult.ConcatText());
-
-            // Check for empty text
-            if (ocrText.empty())
+            if (shouldDetect)
             {
-                ULONGLONG now = GetTickCount64();
-                ULONGLONG limit = static_cast<ULONGLONG>(m_intervalMs.load()) + 1000;
-                if (now - m_lastSeenTime > limit)
+                // Phase 1: Detect text regions + crop
+                DetectionResult detection = m_ocrEngine.Detect(pending.frameMat);
+
+                // No text detected
+                if (detection.empty())
                 {
-                    m_translationHistory.clear();
-                    m_lastOCRText.clear();
-                    if (m_overlay) m_overlay->SetText(L"");
-                    if (OnStatus) OnStatus(L"Screen cleared (no text recognized + timeout)");
-                }
-                m_networkBusy.store(false);
-                continue;
-            }
-
-            // Update last seen timestamp since we successfully detected text
-            m_lastSeenTime = GetTickCount64();
-
-            // Translate if text changed
-            if (ocrText == m_lastOCRText)
-            {
-                if (OnStatus) OnStatus(L"Skipped (OCR text unchanged)");
-            }
-            else
-            {
-                m_lastOCRText = ocrText;
-                if (m_client)
-                {
-                    if (OnStatus) OnStatus(L"Translating: " + ocrText);
-                    std::wstring result = m_client->Translate(ocrText);
-                    if (!result.empty())
+                    m_boxDiffDetector.Reset();
+                    ULONGLONG now = GetTickCount64();
+                    ULONGLONG limit = static_cast<ULONGLONG>(m_intervalMs.load()) + 1000;
+                    if (now - m_lastSeenTime > limit)
                     {
-                        ULONGLONG now = GetTickCount64();
-                        ULONGLONG limit = static_cast<ULONGLONG>(m_intervalMs.load()) + 1000;
-
-                        // Only stack history if the previous translation was replaced too quickly
-                        if (m_lastTranslateTime > 0 && (now - m_lastTranslateTime > limit))
-                        {
-                            m_translationHistory.clear();
-                        }
-                        m_lastTranslateTime = now;
-
-                        // Add to history, keep max 3 lines
-                        m_translationHistory.push_back(result);
-                        if (m_translationHistory.size() > 3)
-                        {
-                            m_translationHistory.erase(m_translationHistory.begin());
-                        }
-
-                        // Join history with newlines
-                        std::wstring joinedText;
-                        for (size_t i = 0; i < m_translationHistory.size(); ++i)
-                        {
-                            if (i > 0) joinedText += L"\n";
-                            joinedText += m_translationHistory[i];
-                        }
-
-                        if (m_overlay) m_overlay->SetText(joinedText);
-                        if (OnStatus)  OnStatus(L"OK: " + result);
+                        m_translationHistory.clear();
+                        m_lastOCRText.clear();
+                        if (m_overlay) m_overlay->SetText(L"");
+                        if (OnStatus) OnStatus(L"Screen cleared (no text detected + timeout)");
                     }
                     else
                     {
-                        if (OnStatus) OnStatus(L"API error: " + m_client->GetLastError());
+                        if (OnStatus) OnStatus(L"No text detected, keeping overlay (timeout pending)");
+                    }
+                    m_networkBusy.store(false);
+                    continue;
+                }
+
+                // Remember boxes and crops
+                m_boxDiffDetector.Update(detection.boxes, detection.regionGrays);
+
+                // Phase 2: Recognize text
+                OcrResult ocrResult = m_ocrEngine.Recognize(detection);
+
+                // Concatenate recognized text
+                std::wstring ocrText = Utf8ToWide(ocrResult.ConcatText());
+
+                // Check for empty text
+                if (ocrText.empty())
+                {
+                    ULONGLONG now = GetTickCount64();
+                    ULONGLONG limit = static_cast<ULONGLONG>(m_intervalMs.load()) + 1000;
+                    if (now - m_lastSeenTime > limit)
+                    {
+                        m_translationHistory.clear();
+                        m_lastOCRText.clear();
+                        if (m_overlay) m_overlay->SetText(L"");
+                        if (OnStatus) OnStatus(L"Screen cleared (no text recognized + timeout)");
+                    }
+                    m_networkBusy.store(false);
+                    continue;
+                }
+
+                // Update last seen timestamp since we successfully detected text
+                m_lastSeenTime = GetTickCount64();
+
+                // Translate if text changed
+                if (ocrText == m_lastOCRText)
+                {
+                    if (OnStatus) OnStatus(L"Skipped (OCR text unchanged)");
+                }
+                else
+                {
+                    m_lastOCRText = ocrText;
+                    if (m_client)
+                    {
+                        if (OnStatus) OnStatus(L"Translating: " + ocrText);
+                        std::wstring result = m_client->Translate(ocrText);
+                        if (!result.empty())
+                        {
+                            ULONGLONG now = GetTickCount64();
+                            ULONGLONG limit = static_cast<ULONGLONG>(m_intervalMs.load()) + 1000;
+
+                            // Only stack history if the previous translation was replaced too quickly
+                            if (m_lastTranslateTime > 0 && (now - m_lastTranslateTime > limit))
+                            {
+                                m_translationHistory.clear();
+                            }
+                            m_lastTranslateTime = now;
+
+                            // Add to history, keep max 3 lines
+                            m_translationHistory.push_back(result);
+                            if (m_translationHistory.size() > 3)
+                            {
+                                m_translationHistory.erase(m_translationHistory.begin());
+                            }
+
+                            // Join history with newlines
+                            std::wstring joinedText;
+                            for (size_t i = 0; i < m_translationHistory.size(); ++i)
+                            {
+                                if (i > 0) joinedText += L"\n";
+                                joinedText += m_translationHistory[i];
+                            }
+
+                            if (m_overlay) m_overlay->SetText(joinedText);
+                            if (OnStatus)  OnStatus(L"OK: " + result);
+                        }
+                        else
+                        {
+                            if (OnStatus) OnStatus(L"API error: " + m_client->GetLastError());
+                        }
                     }
                 }
             }
