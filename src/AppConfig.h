@@ -24,7 +24,7 @@ struct AppConfig
     // ── Capture ──────────────────────────────────────────────────────────────
     RECT captureRect  = { 0, 0, 800, 100 }; ///< Screen-coordinate capture region
     bool captureSet   = false;              ///< Whether the user has chosen a region
-    int  scaleRoi     = 50;                 ///< Scale ROI in percentage (default 50)
+    int  scaleRoi     = 80;                 ///< Scale ROI in percentage (default 70)
     int  monitorIndex = 0;                  ///< 0 = primary monitor
 
     // -- Scheduler / Capture mode ----------------------------------------------

@@ -106,7 +106,7 @@ bool AppConfig::Load(const std::wstring& iniPath)
     captureRect.right  = ReadInt(L"Capture", L"Right",   800, f);
     captureRect.bottom = ReadInt(L"Capture", L"Bottom",  100, f);
     captureSet         = ReadInt(L"Capture", L"Set",     0,   f) != 0;
-    scaleRoi           = ReadInt(L"Capture", L"ScaleRoi", 50, f);
+    scaleRoi           = ReadInt(L"Capture", L"ScaleRoi", 80, f);
     monitorIndex       = ReadInt(L"Capture", L"Monitor", 0,   f);
     captureMode        = static_cast<CaptureMode>(ReadInt(L"Capture", L"Mode", 0, f));
     captureIntervalMs  = ReadInt(L"Capture", L"IntervalMs", 1000, f);

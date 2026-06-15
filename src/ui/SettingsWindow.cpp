@@ -542,7 +542,7 @@ void SettingsWindow::CreateRealtimeTab(int x, int y, int w)
     h = MakeLabel(x + 8, cy, 100, LH, L"Scale ROI (%):");
     m_realtimeControls.push_back(h);
     h = MakeEdit(x + 110, cy, 70, EH, IDC_SCALE_ROI_EDIT);
-    SetWindowTextW(h, L"50");
+    SetWindowTextW(h, L"80");
     m_realtimeControls.push_back(h);
     cy += EH + 6;
 
