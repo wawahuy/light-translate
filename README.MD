@@ -4,6 +4,8 @@
 
 Light Translate is a desktop utility that captures text from your screen via region selection, performs optical character recognition (OCR) using PaddleOCR's C++ inference engine, and delivers instant translations — all with minimal CPU overhead and blazing-fast inference.
 
+![Demo](demo/demo.gif)
+
 ---
 
 ## Quick Start
