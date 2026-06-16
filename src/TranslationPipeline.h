@@ -12,6 +12,7 @@
 #include "src/ocr/IOcrEngine.h"
 #include "src/ocr/BoxDiffDetector.h"
 #include "src/network/ITranslateProvider.h"
+#include "src/AppConfig.h"
 
 // Forward declarations
 class CaptureEngine;
@@ -31,6 +32,8 @@ public:
 
     // Set OCR Engine configuration.
     void SetOcrConfig(OcrType type, const std::wstring& detDir = L"", const std::wstring& recDir = L"");
+
+    void SetDisplayMode(DisplayMode mode) { m_displayMode = mode; }
 
     // Start pipeline threads.
     bool Start(int intervalMs);
@@ -81,6 +84,7 @@ private:
     HANDLE               m_hTriggerEvent = nullptr;
     std::atomic<int>     m_intervalMs{ 1000 };
     std::atomic<int>     m_scaleRoi{ 100 };
+    DisplayMode          m_displayMode = DisplayMode::InPlace;
 
     // Single-slot frame queue
     struct PendingFrame { cv::Mat frameMat; };
@@ -100,6 +104,7 @@ private:
     // History and caching
     std::wstring         m_lastOCRText;
     std::vector<std::wstring> m_translationHistory;
+    std::vector<std::vector<cv::Point2f>> m_lastBoxes;
     ULONGLONG            m_lastTranslateTime = 0;
     ULONGLONG            m_lastSeenTime = 0;
 };

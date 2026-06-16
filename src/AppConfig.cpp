@@ -61,6 +61,7 @@ void AppConfig::Save(const std::wstring& iniPath) const
     WriteInt(L"Capture", L"ScaleRoi", scaleRoi, f);
     WriteInt(L"Capture", L"Monitor", monitorIndex, f);
     WriteInt(L"Capture", L"Mode",    static_cast<int>(captureMode), f);
+    WriteInt(L"Capture", L"DisplayMode", static_cast<int>(displayMode), f);
     WriteInt(L"Capture", L"IntervalMs", captureIntervalMs, f);
     WriteInt(L"Capture", L"HotkeyVk",  static_cast<int>(hotkeyVk), f);
     WriteInt(L"Capture", L"HotkeyMod", static_cast<int>(hotkeyMod), f);
@@ -111,6 +112,7 @@ bool AppConfig::Load(const std::wstring& iniPath)
     scaleRoi           = ReadInt(L"Capture", L"ScaleRoi", 80, f);
     monitorIndex       = ReadInt(L"Capture", L"Monitor", 0,   f);
     captureMode        = static_cast<CaptureMode>(ReadInt(L"Capture", L"Mode", 0, f));
+    displayMode        = static_cast<DisplayMode>(ReadInt(L"Capture", L"DisplayMode", 1, f)); // Default to InPlace (1)
     captureIntervalMs  = ReadInt(L"Capture", L"IntervalMs", 1000, f);
     hotkeyVk           = static_cast<UINT>(ReadInt(L"Capture", L"HotkeyVk", 'N', f));
     hotkeyMod          = static_cast<UINT>(ReadInt(L"Capture", L"HotkeyMod", MOD_CONTROL, f));

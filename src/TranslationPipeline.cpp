@@ -82,6 +82,13 @@ bool TranslationPipeline::Start(int intervalMs)
 
     m_running.store(true);
 
+    if (m_displayMode == DisplayMode::InPlace && m_capture && m_overlay)
+    {
+        RECT capRect = m_capture->GetCaptureRect();
+        m_overlay->SetPosition(capRect.left, capRect.top);
+        m_overlay->SetSize(capRect.right - capRect.left, capRect.bottom - capRect.top);
+    }
+
     m_networkThread   = std::thread(&TranslationPipeline::NetworkProc,   this);
     m_schedulerThread = std::thread(&TranslationPipeline::SchedulerProc, this);
 
@@ -267,7 +274,14 @@ void TranslationPipeline::ProcessPendingFrame(cv::Mat frameMat)
         {
             m_translationHistory.clear();
             m_lastOCRText.clear();
-            if (m_overlay) m_overlay->SetText(L"");
+            m_lastBoxes.clear();
+            if (m_overlay)
+            {
+                if (m_displayMode == DisplayMode::InPlace)
+                    m_overlay->SetInPlaceText(L"", {});
+                else
+                    m_overlay->SetText(L"");
+            }
             if (OnStatus) OnStatus(L"Screen cleared (no text detected + timeout)");
         }
         else
@@ -346,16 +360,19 @@ bool TranslationPipeline::PerformOcr(const cv::Mat& frameMat, OcrResult& outOcrR
                 DetectionResult detection = m_ocrEngine->Detect(frameMat);
                 if (detection.empty())
                 {
+                    m_lastBoxes.clear();
                     return false;
                 }
 
                 m_boxDiffDetector.Update(detection.boxes, detection.regionGrays);
+                m_lastBoxes = detection.boxes;
                 outOcrResult = m_ocrEngine->Recognize(detection);
             }
         }
         else
         {
             // Execute standard single-phase execution (e.g. Windows OCR)
+            m_lastBoxes.clear();
             outOcrResult = m_ocrEngine->Recognize(frameMat);
         }
     }
@@ -425,7 +442,36 @@ void TranslationPipeline::TranslateAndShow(const OcrResult& ocrResult)
                 joinedText += m_translationHistory[i];
             }
 
-            if (m_overlay) m_overlay->SetText(joinedText);
+            if (m_overlay)
+            {
+                if (m_displayMode == DisplayMode::InPlace)
+                {
+                    // Scale coordinates back to original frame ROI size
+                    double factor = m_scaleRoi.load() / 100.0;
+                    double invFactor = (factor > 0.0) ? (1.0 / factor) : 1.0;
+
+                    std::vector<std::vector<Point2F>> overlayBoxes;
+                    overlayBoxes.reserve(m_lastBoxes.size());
+                    for (const auto& box : m_lastBoxes)
+                    {
+                        std::vector<Point2F> overlayBox;
+                        overlayBox.reserve(box.size());
+                        for (const auto& pt : box)
+                        {
+                            overlayBox.push_back({
+                                static_cast<float>(pt.x * invFactor),
+                                static_cast<float>(pt.y * invFactor)
+                            });
+                        }
+                        overlayBoxes.push_back(std::move(overlayBox));
+                    }
+                    m_overlay->SetInPlaceText(result, overlayBoxes);
+                }
+                else
+                {
+                    m_overlay->SetText(joinedText);
+                }
+            }
             if (OnStatus)  OnStatus(L"OK: " + result);
         }
         else

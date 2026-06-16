@@ -4,6 +4,10 @@
 #include <string>
 #include <functional>
 #include <mutex>
+#include <vector>
+
+// Simple coordinate struct for OCR box vertices
+struct Point2F { float x; float y; };
 
 /// Always-on-top, click-through, transparent overlay window.
 ///
@@ -25,8 +29,11 @@ public:
     bool Create(HINSTANCE hInstance);
     void Destroy();
 
-    /// Set the displayed text.  Safe to call from any thread.
+    // Set the displayed text.  Safe to call from any thread.
     void SetText(const std::wstring& text);
+
+    // Set text and detected text regions for in-place rendering. Safe from any thread.
+    void SetInPlaceText(const std::wstring& text, const std::vector<std::vector<Point2F>>& boxes);
 
     const std::wstring& GetText() const { return m_text; }
 
@@ -101,4 +108,5 @@ private:
     RECT m_boundRect = {};
 
     std::mutex m_renderMutex;   // Serialise Redraw() calls
+    std::vector<std::vector<Point2F>> m_boxes; // Bounding boxes for in-place text masking
 };

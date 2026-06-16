@@ -43,6 +43,7 @@ public:
 
     /// Set the screen-coordinate region to capture.
     void SetCaptureRect(const RECT& rc) { m_captureRect = rc; }
+    RECT GetCaptureRect() const { return m_captureRect; }
 
     /// Start the internal capture thread.
     bool Start();

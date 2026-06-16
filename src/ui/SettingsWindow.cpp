@@ -428,7 +428,7 @@ void SettingsWindow::CreateControls()
     // -- Tab Control -----------------------------------------------------------
     m_tabCtrl = CreateWindowExW(0, WC_TABCONTROLW, L"",
         WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | TCS_TABS,
-        M, y, W, 400,
+        M, y, W, 430,
         m_hwnd,
         reinterpret_cast<HMENU>(static_cast<UINT_PTR>(IDC_TAB_CTRL)),
         m_hInstance, nullptr);
@@ -467,7 +467,7 @@ void SettingsWindow::CreateControls()
     // Show the first tab (Realtime) by default
     ShowTab(0);
 
-    y += 408;   // below tab control
+    y += 438;   // below tab control
 
     // -- Start / Stop (always visible) -----------------------------------------
     MakeButton(M, y, 120, 36, L"\u25B6  START", IDC_START_BTN);
@@ -586,9 +586,20 @@ void SettingsWindow::CreateRealtimeTab(int x, int y, int w)
     cy += EH + 10;
 
     // -- Overlay & Typography group --------------------------------------------
-    h = MakeGroup(x, cy, w, 180, L"  Overlay & Typography  ");
+    h = MakeGroup(x, cy, w, 210, L"  Overlay & Typography  ");
     m_realtimeControls.push_back(h);
     cy += 18;
+
+    h = MakeLabel(x + 8, cy, 100, LH, L"Display Mode:");
+    m_realtimeControls.push_back(h);
+    {
+        HWND hDispMode = MakeCombo(x + 110, cy, 200, 80, IDC_DISPLAY_MODE_COMBO);
+        SendMessageW(hDispMode, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"In-Place (Default)"));
+        SendMessageW(hDispMode, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Overlay Window"));
+        SendMessageW(hDispMode, CB_SETCURSEL, 0, 0);
+        m_realtimeControls.push_back(hDispMode);
+    }
+    cy += EH + 6;
 
     h = MakeLabel(x + 8, cy, 72, LH, L"Position:");
     m_realtimeControls.push_back(h);
@@ -890,6 +901,10 @@ void SettingsWindow::ConfigToUI()
     HWND hMode = GetDlgItem(m_hwnd, IDC_CAPTURE_MODE_COMBO);
     SendMessageW(hMode, CB_SETCURSEL, static_cast<int>(m_config.captureMode), 0);
 
+    // Display Mode
+    HWND hDisp = GetDlgItem(m_hwnd, IDC_DISPLAY_MODE_COMBO);
+    SendMessageW(hDisp, CB_SETCURSEL, (m_config.displayMode == DisplayMode::InPlace) ? 0 : 1, 0);
+
     // Interval
     SetDlgItemInt(m_hwnd, IDC_INTERVAL_EDIT,
         static_cast<UINT>(m_config.captureIntervalMs), FALSE);
@@ -939,6 +954,10 @@ void SettingsWindow::UIToConfig()
         HWND hOcr = GetDlgItem(m_hwnd, IDC_OCR_COMBO);
         int ocrIdx = static_cast<int>(SendMessageW(hOcr, CB_GETCURSEL, 0, 0));
         m_config.ocrType = OcrType::PaddleOCR;
+
+        HWND hDisp = GetDlgItem(m_hwnd, IDC_DISPLAY_MODE_COMBO);
+        int dispIdx = static_cast<int>(SendMessageW(hDisp, CB_GETCURSEL, 0, 0));
+        m_config.displayMode = (dispIdx == 0) ? DisplayMode::InPlace : DisplayMode::Overlay;
     }
 
     GetDlgItemTextW(m_hwnd, IDC_API_MODEL_EDIT, buf, 1024);
@@ -1508,13 +1527,25 @@ void SettingsWindow::OnStart()
     m_overlay.SetStrokeColor(m_config.strokeColor);
     m_overlay.SetStrokeEnabled(m_config.strokeEnabled);
     m_overlay.SetStrokeWidth(m_config.strokeWidth);
-    m_overlay.SetPosition(m_config.overlayPos.x, m_config.overlayPos.y);
-    m_overlay.SetSize(m_config.overlayWidth, m_config.overlayHeight);
-    m_overlay.SetText(L"");
+
+    if (m_config.displayMode == DisplayMode::InPlace)
+    {
+        m_overlay.SetPosition(m_config.captureRect.left, m_config.captureRect.top);
+        m_overlay.SetSize(m_config.captureRect.right - m_config.captureRect.left,
+                          m_config.captureRect.bottom - m_config.captureRect.top);
+        m_overlay.SetInPlaceText(L"", {});
+    }
+    else
+    {
+        m_overlay.SetPosition(m_config.overlayPos.x, m_config.overlayPos.y);
+        m_overlay.SetSize(m_config.overlayWidth, m_config.overlayHeight);
+        m_overlay.SetText(L"");
+    }
     m_overlay.Show();
 
     // Start based on capture mode
     m_scheduler.SetComponents(&m_capture, m_client.get(), &m_overlay);
+    m_scheduler.SetDisplayMode(m_config.displayMode);
     
     // Resolve OCR model paths and configure OCR type
     {
@@ -1614,6 +1645,14 @@ void SettingsWindow::OnTestApi()
 
 void SettingsWindow::OnToggleDrag()
 {
+    if (m_config.displayMode == DisplayMode::InPlace)
+    {
+        MessageBoxW(m_hwnd,
+            L"Dragging is disabled in In-Place mode since the overlay is automatically locked to the capture region.",
+            L"Information", MB_ICONINFORMATION);
+        return;
+    }
+
     bool newMode = !m_overlay.IsDragMode();
     m_overlay.EnableDrag(newMode);
     UpdateStatus(newMode ? L"Drag mode ON \u2014 drag the overlay, then click again to lock."
@@ -1744,22 +1783,31 @@ void SettingsWindow::SyncHelperWindows()
     if (showHelpers && !m_running)
     {
         m_captureHelper.Show(true);
-        m_overlay.EnableDrag(true);
-        
-        // Render preview text so user can see font styles
-        m_overlay.SetFontName(m_config.fontName);
-        m_overlay.SetFontSize(m_config.fontSize);
-        m_overlay.SetTextColor(m_config.textColor);
-        m_overlay.SetShadowColor(m_config.shadowColor);
-        m_overlay.SetShadowEnabled(m_config.shadowEnabled);
-        m_overlay.SetStrokeColor(m_config.strokeColor);
-        m_overlay.SetStrokeEnabled(m_config.strokeEnabled);
-        m_overlay.SetStrokeWidth(m_config.strokeWidth);
-        m_overlay.SetPosition(m_config.overlayPos.x, m_config.overlayPos.y);
-        m_overlay.SetSize(m_config.overlayWidth, m_config.overlayHeight);
-        
-        m_overlay.SetText(L"Game Translation Overlay (Preview)\nDrag borders to resize, drag center to move.");
-        m_overlay.Show();
+
+        if (m_config.displayMode == DisplayMode::InPlace)
+        {
+            m_overlay.EnableDrag(false);
+            m_overlay.Hide();
+        }
+        else
+        {
+            m_overlay.EnableDrag(true);
+            
+            // Render preview text so user can see font styles
+            m_overlay.SetFontName(m_config.fontName);
+            m_overlay.SetFontSize(m_config.fontSize);
+            m_overlay.SetTextColor(m_config.textColor);
+            m_overlay.SetShadowColor(m_config.shadowColor);
+            m_overlay.SetShadowEnabled(m_config.shadowEnabled);
+            m_overlay.SetStrokeColor(m_config.strokeColor);
+            m_overlay.SetStrokeEnabled(m_config.strokeEnabled);
+            m_overlay.SetStrokeWidth(m_config.strokeWidth);
+            m_overlay.SetPosition(m_config.overlayPos.x, m_config.overlayPos.y);
+            m_overlay.SetSize(m_config.overlayWidth, m_config.overlayHeight);
+            
+            m_overlay.SetText(L"Game Translation Overlay (Preview)\nDrag borders to resize, drag center to move.");
+            m_overlay.Show();
+        }
     }
     else
     {

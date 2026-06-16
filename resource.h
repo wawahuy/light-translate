@@ -44,6 +44,7 @@
 #define IDC_OCR_COMBO          1042  ///< OCR Engine selection
 #define IDC_STATIC_API_MODEL   1043  ///< Static label for API Model
 #define IDC_STATIC_API_KEY     1044  ///< Static label for API Key
+#define IDC_DISPLAY_MODE_COMBO 1045  ///< Display Mode selection combo box
 
 
 
@@ -58,3 +59,4 @@
 #define WM_OVERLAY_SETTEXT    (WM_APP + 1)   // LPARAM = wchar_t* (heap, caller frees)
 #define WM_UPDATE_STATUS      (WM_APP + 2)   // LPARAM = wchar_t* (heap, caller frees)
 #define WM_SHOW_REGION_RESULT (WM_APP + 3)   // LPARAM = RegionResultData* (heap, UI thread frees)
+#define WM_OVERLAY_SETINPLACE (WM_APP + 4)   // LPARAM = OverlayInPlaceData* (heap, UI thread frees)

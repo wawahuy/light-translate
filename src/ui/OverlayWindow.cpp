@@ -3,9 +3,16 @@
 #include <objbase.h>   // MinGW-w64: phải include trước gdiplus để có PROPID
 #include <gdiplus.h>
 #include <cstring>
+#include <algorithm>
 #pragma comment(lib, "gdiplus.lib")
 
 constexpr wchar_t OverlayWindow::CLASS_NAME[];
+
+struct OverlayInPlaceData
+{
+    std::wstring text;
+    std::vector<std::vector<Point2F>> boxes;
+};
 
 static LRESULT HitTestBorder(HWND hwnd, POINT ptCursor, int borderThickness = 10)
 {
@@ -65,6 +72,12 @@ bool OverlayWindow::Create(HINSTANCE hInstance)
 
     if (!m_hwnd) return false;
 
+#ifndef WDA_EXCLUDEFROMCAPTURE
+#define WDA_EXCLUDEFROMCAPTURE 0x00000011
+#endif
+    // Exclude the overlay window from screen capture to prevent capture feedback loops
+    SetWindowDisplayAffinity(m_hwnd, WDA_EXCLUDEFROMCAPTURE);
+
     // Default bound rect = entire virtual desktop (all monitors)
     m_boundRect = {
         GetSystemMetrics(SM_XVIRTUALSCREEN),
@@ -96,6 +109,13 @@ void OverlayWindow::SetText(const std::wstring& text)
     wchar_t* buf = new wchar_t[text.size() + 1];
     std::wmemcpy(buf, text.c_str(), text.size() + 1);
     PostMessageW(m_hwnd, WM_OVERLAY_SETTEXT, 0, reinterpret_cast<LPARAM>(buf));
+}
+
+void OverlayWindow::SetInPlaceText(const std::wstring& text, const std::vector<std::vector<Point2F>>& boxes)
+{
+    if (!m_hwnd) return;
+    OverlayInPlaceData* data = new OverlayInPlaceData{ text, boxes };
+    PostMessageW(m_hwnd, WM_OVERLAY_SETINPLACE, 0, reinterpret_cast<LPARAM>(data));
 }
 
 void OverlayWindow::SetPosition(int x, int y)
@@ -252,17 +272,66 @@ void OverlayWindow::Redraw()
         {
             Gdiplus::FontFamily family(m_fontName.c_str());
             Gdiplus::StringFormat fmt;
-            fmt.SetAlignment(Gdiplus::StringAlignmentCenter);
-            fmt.SetLineAlignment(Gdiplus::StringAlignmentFar);
-            // No NoWrap flag → GDI+ auto word-wraps within layoutRect
-            // No LineLimit flag → partial last line is also rendered
+            Gdiplus::RectF layoutRect;
+            float shadowOffsetX = 2.0f;
+            float shadowOffsetY = 2.0f;
 
-            const float margin = 10.0f;
-            Gdiplus::RectF layoutRect(
-                margin, margin,
-                static_cast<float>(m_width)  - margin * 2,
-                static_cast<float>(m_height) - margin * 2
-            );
+            if (!m_boxes.empty())
+            {
+                // In-place mode: compute collective bounding box
+                float minX = 1e9f, minY = 1e9f, maxX = -1e9f, maxY = -1e9f;
+                bool hasPoints = false;
+                for (const auto& box : m_boxes)
+                {
+                    for (const auto& pt : box)
+                    {
+                        if (pt.x < minX) minX = pt.x;
+                        if (pt.y < minY) minY = pt.y;
+                        if (pt.x > maxX) maxX = pt.x;
+                        if (pt.y > maxY) maxY = pt.y;
+                        hasPoints = true;
+                    }
+                }
+                if (hasPoints)
+                {
+                    float w = maxX - minX;
+                    float h = maxY - minY;
+
+                    // Inflate the bounding box outward to ensure enough room for translation
+                    float padX = std::max(w * 0.15f, 25.0f);
+                    float padY = std::max(h * 0.15f, 12.0f);
+
+                    float newMinX = std::max(0.0f, minX - padX);
+                    float newMinY = std::max(0.0f, minY - padY);
+                    float newMaxX = std::min(static_cast<float>(m_width), maxX + padX);
+                    float newMaxY = std::min(static_cast<float>(m_height), maxY + padY);
+
+                    layoutRect = Gdiplus::RectF(newMinX, newMinY, newMaxX - newMinX, newMaxY - newMinY);
+                }
+                else
+                {
+                    layoutRect = Gdiplus::RectF(0.0f, 0.0f, static_cast<float>(m_width), static_cast<float>(m_height));
+                }
+
+                // Draw solid black background mask over the collective bounding box
+                Gdiplus::SolidBrush blackBrush(Gdiplus::Color(255, 0, 0, 0));
+                g.FillRectangle(&blackBrush, layoutRect);
+
+                fmt.SetAlignment(Gdiplus::StringAlignmentCenter);
+                fmt.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+            }
+            else
+            {
+                // Standard Overlay Mode
+                const float margin = 10.0f;
+                layoutRect = Gdiplus::RectF(
+                    margin, margin,
+                    static_cast<float>(m_width)  - margin * 2,
+                    static_cast<float>(m_height) - margin * 2
+                );
+                fmt.SetAlignment(Gdiplus::StringAlignmentCenter);
+                fmt.SetLineAlignment(Gdiplus::StringAlignmentFar);
+            }
 
             // Build GraphicsPath to allow stroke (outline) rendering
             const int fontStyle = m_fontBold ? Gdiplus::FontStyleBold : Gdiplus::FontStyleRegular;
@@ -277,13 +346,14 @@ void OverlayWindow::Redraw()
                 &fmt
             );
 
-            // 1. Shadow: tạo lại path với layoutRect dịch 2px (tránh copy ctor private)
+            // 1. Shadow: build shadow path with offset
             if (m_shadowEnabled)
             {
                 Gdiplus::RectF shadowRect(
-                    margin + 2.0f, margin + 2.0f,
-                    static_cast<float>(m_width)  - margin * 2,
-                    static_cast<float>(m_height) - margin * 2
+                    layoutRect.X + shadowOffsetX,
+                    layoutRect.Y + shadowOffsetY,
+                    layoutRect.Width,
+                    layoutRect.Height
                 );
                 Gdiplus::GraphicsPath shadowPath;
                 shadowPath.AddString(
@@ -384,6 +454,20 @@ LRESULT OverlayWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
         {
             m_text = buf;
             delete[] buf;
+        }
+        m_boxes.clear();
+        if (IsVisible()) Redraw();
+        return 0;
+    }
+
+    case WM_OVERLAY_SETINPLACE:
+    {
+        auto* data = reinterpret_cast<OverlayInPlaceData*>(lParam);
+        if (data)
+        {
+            m_text = std::move(data->text);
+            m_boxes = std::move(data->boxes);
+            delete data;
         }
         if (IsVisible()) Redraw();
         return 0;

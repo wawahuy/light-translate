@@ -11,6 +11,13 @@ enum class CaptureMode : int
     Hotkey = 1,  ///< Capture one frame when hotkey is pressed
 };
 
+/// Translation display options.
+enum class DisplayMode : int
+{
+    Overlay = 0,  ///< Show text in a separate overlay window
+    InPlace = 1,  ///< Show text directly over detected boxes with a black background
+};
+
 /// All user-configurable settings.
 /// Persisted as a UTF-16 INI file via the Win32 Profile API.
 struct AppConfig
@@ -31,6 +38,7 @@ struct AppConfig
 
     // -- Scheduler / Capture mode ----------------------------------------------
     CaptureMode captureMode     = CaptureMode::Auto;
+    DisplayMode displayMode     = DisplayMode::InPlace; // Default to In-Place
     int         captureIntervalMs = 1000; ///< Interval between auto-capture frames (ms)
     UINT        hotkeyVk        = 'N';    ///< Virtual-key code for hotkey capture (Ctrl + N)
     UINT        hotkeyMod       = MOD_CONTROL;

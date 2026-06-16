@@ -140,5 +140,5 @@ private:
 
     static constexpr wchar_t CLASS_NAME[] = L"GameTranslate_SettingsWnd";
     static constexpr int WND_W = 560;
-    static constexpr int WND_H = 710;
+    static constexpr int WND_H = 740;
 };
