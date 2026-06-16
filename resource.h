@@ -41,6 +41,8 @@
 #define IDC_LANGUAGE_COMBO    1039   ///< Target language combo box
 #define IDC_REGION_HOTKEY_EDIT 1040  ///< Region selection hotkey
 #define IDC_SCALE_ROI_EDIT     1041  ///< Scale ROI in percentage
+#define IDC_OCR_COMBO          1042  ///< OCR Engine selection
+
 
 // === Tray icon ===
 #define WM_TRAYICON           (WM_APP + 100)

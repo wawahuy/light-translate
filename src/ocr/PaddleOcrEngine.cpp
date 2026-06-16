@@ -1,4 +1,4 @@
-#include "src/ocr/OcrEngine.h"
+#include "src/ocr/PaddleOcrEngine.h"
 #include "src/utils/StringUtils.h"
 #include "src/paddleocr/modules/text_detection/predictor.h"
 #include "src/paddleocr/modules/text_recognition/predictor.h"
@@ -7,38 +7,26 @@
 #include <opencv2/imgproc.hpp>
 #include <algorithm>
 
-// ── OcrResult helpers ─────────────────────────────────────────────────────────
-
-std::string OcrResult::ConcatText() const
+PaddleOcrEngine::PaddleOcrEngine(const std::wstring& detModelDir, const std::wstring& recModelDir)
+    : m_detModelDir(detModelDir), m_recModelDir(recModelDir)
 {
-    std::string result;
-    for (auto& t : texts)
-    {
-        if (!result.empty())
-            result += " ";
-        result += t;
-    }
-    return result;
 }
 
-// ── OcrEngine ─────────────────────────────────────────────────────────────────
+PaddleOcrEngine::~PaddleOcrEngine() = default;
+PaddleOcrEngine::PaddleOcrEngine(PaddleOcrEngine&&) noexcept = default;
+PaddleOcrEngine& PaddleOcrEngine::operator=(PaddleOcrEngine&&) noexcept = default;
 
-OcrEngine::OcrEngine() = default;
-OcrEngine::~OcrEngine() = default;
-OcrEngine::OcrEngine(OcrEngine&&) noexcept = default;
-OcrEngine& OcrEngine::operator=(OcrEngine&&) noexcept = default;
-
-bool OcrEngine::Initialize(const std::wstring& detModelDir, const std::wstring& recModelDir)
+bool PaddleOcrEngine::Initialize()
 {
     if (m_initialized) return true;
 
-    if (!CheckOcrModelExists(detModelDir) || !CheckOcrModelExists(recModelDir))
+    if (!CheckOcrModelExists(m_detModelDir) || !CheckOcrModelExists(m_recModelDir))
         return false;
 
-    // Text Detection
+    // Text Detection setup
     TextDetPredictorParams detParams;
     detParams.model_name     = "PP-OCRv5_mobile_det";
-    detParams.model_dir      = WideToUtf8(detModelDir);
+    detParams.model_dir      = WideToUtf8(m_detModelDir);
     detParams.device         = "cpu";
     detParams.limit_side_len = 960;
     detParams.limit_type     = "max";
@@ -50,10 +38,10 @@ bool OcrEngine::Initialize(const std::wstring& detModelDir, const std::wstring& 
     m_textDetModel = std::unique_ptr<BasePredictor>(
         new TextDetPredictor(detParams));
 
-    // Text Recognition
+    // Text Recognition setup
     TextRecPredictorParams recParams;
     recParams.model_name = "PP-OCRv5_mobile_rec";
-    recParams.model_dir  = WideToUtf8(recModelDir);
+    recParams.model_dir  = WideToUtf8(m_recModelDir);
     recParams.device     = "cpu";
 
     m_textRecModel = std::unique_ptr<BasePredictor>(
@@ -66,21 +54,26 @@ bool OcrEngine::Initialize(const std::wstring& detModelDir, const std::wstring& 
     return true;
 }
 
-// ── Phase 1: Detect + Crop ────────────────────────────────────────────────────
+OcrResult PaddleOcrEngine::Recognize(const cv::Mat& bgrFrame)
+{
+    DetectionResult det = Detect(bgrFrame);
+    if (det.empty()) return {};
+    return Recognize(det);
+}
 
-DetectionResult OcrEngine::Detect(const cv::Mat& bgrFrame)
+DetectionResult PaddleOcrEngine::Detect(const cv::Mat& bgrFrame)
 {
     DetectionResult result;
     if (!m_initialized) return result;
 
-    // Text Detection
+    // Run text detection model
     std::vector<cv::Mat> detInput = { bgrFrame.clone() };
     m_textDetModel->Predict(detInput);
     std::vector<TextDetPredictorResult> detResults =
         static_cast<TextDetPredictor*>(m_textDetModel.get())->PredictorResult();
 
     if (detResults.empty() || detResults[0].dt_polys.empty())
-        return result;  // no text detected
+        return result;  // No text detected
 
     // Sort detected polygons (top-to-bottom, left-to-right)
     auto dt_polys = ComponentsProcessor::SortQuadBoxes(detResults[0].dt_polys);
@@ -88,7 +81,7 @@ DetectionResult OcrEngine::Detect(const cv::Mat& bgrFrame)
     // Crop text regions
     auto cropResult = (*m_cropByPolys)(bgrFrame, dt_polys);
     if (!cropResult.ok())
-        return result;  // crop failed
+        return result;  // Crop failed
 
     result.croppedTexts = cropResult.value();
     result.boxes = dt_polys;
@@ -108,9 +101,7 @@ DetectionResult OcrEngine::Detect(const cv::Mat& bgrFrame)
     return result;
 }
 
-// ── Phase 2: Recognize ────────────────────────────────────────────────────────
-
-OcrResult OcrEngine::Recognize(const DetectionResult& detection)
+OcrResult PaddleOcrEngine::Recognize(const DetectionResult& detection)
 {
     OcrResult result;
     if (!m_initialized || detection.empty()) return result;
@@ -154,7 +145,7 @@ OcrResult OcrEngine::Recognize(const DetectionResult& detection)
     return result;
 }
 
-void OcrEngine::Reset()
+void PaddleOcrEngine::Reset()
 {
     m_textDetModel.reset();
     m_textRecModel.reset();

@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <string>
 #include "network/TranslateProvider.h"
+#include "ocr/IOcrEngine.h"
 
 /// Capture trigger mode.
 enum class CaptureMode : int
@@ -16,6 +17,7 @@ struct AppConfig
 {
     // -- API ------------------------------------------------------------------
     TranslateProvider providerType = TranslateProvider::DeepSeek;
+    OcrType ocrType = OcrType::WindowsOCR; // Default to Windows OCR
     std::wstring apiUrl = L"https://api.deepseek.com/chat/completions";
     std::wstring apiModel = L"deepseek-chat";
     std::wstring apiKey = L"";

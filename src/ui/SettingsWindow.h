@@ -11,9 +11,9 @@
 #include "src/ui/CaptureHelperWindow.h"
 #include "src/ui/RegionSelectWindow.h"
 #include "src/ui/RegionResultWindow.h"
-#include "src/network/TextTranslateProvider.h"
-#include "src/ocr/OcrEngine.h"
-#include "src/Scheduler.h"
+#include "src/network/ITranslateProvider.h"
+#include "src/ocr/IOcrEngine.h"
+#include "src/TranslationPipeline.h"
 
 /// The main application window that hosts all settings controls.
 /// Also owns the system tray icon when minimised.
@@ -133,9 +133,9 @@ private:
     CaptureHelperWindow m_captureHelper;
     RegionSelectWindow  m_regionSelect;
     RegionResultWindow  m_regionResult;
-    TextTranslateProvider  m_client;
-    Scheduler        m_scheduler;
-    OcrEngine        m_regionOcr;   ///< Separate OCR engine for region capture
+    std::unique_ptr<ITranslateProvider> m_client;
+    TranslationPipeline   m_scheduler;
+    std::unique_ptr<IOcrEngine> m_regionOcr;   // Separate OCR engine for region capture
 
     static constexpr wchar_t CLASS_NAME[] = L"GameTranslate_SettingsWnd";
     static constexpr int WND_W = 560;

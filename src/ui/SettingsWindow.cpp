@@ -2,6 +2,8 @@
 #include "src/utils/ImageEncoder.h"
 #include "src/utils/StringUtils.h"
 #include "resource.h"
+#include "src/ocr/OcrFactory.h"
+#include "src/network/TranslateProviderFactory.h"
 #include <shellapi.h>
 #include <commctrl.h>
 #include <commdlg.h>
@@ -727,6 +729,20 @@ void SettingsWindow::CreateSystemTab(int x, int y, int w)
     SetWindowTextW(h, L"Ctrl + Shift + O");
     SetWindowSubclass(h, HotkeyEditSubclassProc, IDC_TOGGLE_WND_HOTKEY_EDIT, reinterpret_cast<DWORD_PTR>(this));
     m_systemControls.push_back(h);
+
+    // -- OCR Engine group ------------------------------------------------------
+    cy += 92;
+    h = MakeGroup(x, cy, w, 80, L"  OCR Engine  ");
+    m_systemControls.push_back(h);
+    cy += 18;
+
+    h = MakeLabel(x + 8, cy, 120, LH, L"OCR Provider:");
+    m_systemControls.push_back(h);
+
+    h = MakeCombo(x + 135, cy, 180, 150, IDC_OCR_COMBO);
+    SendMessageW(h, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Windows OCR (Default)"));
+    SendMessageW(h, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"PaddleOCR"));
+    m_systemControls.push_back(h);
 }
 
 // -----------------------------------------------------------------------------
@@ -836,6 +852,10 @@ void SettingsWindow::ConfigToUI()
     SendMessageW(hProv, CB_SETCURSEL,
         m_config.providerType == TranslateProvider::DeepSeek ? 0 : 0, 0);
 
+    // OCR Type
+    HWND hOcr = GetDlgItem(m_hwnd, IDC_OCR_COMBO);
+    SendMessageW(hOcr, CB_SETCURSEL, (m_config.ocrType == OcrType::WindowsOCR) ? 0 : 1, 0);
+
     SetDlgItemTextW(m_hwnd, IDC_API_MODEL_EDIT, m_config.apiModel.c_str());
     SetDlgItemTextW(m_hwnd, IDC_API_KEY_EDIT, m_config.apiKey.c_str());
     SetDlgItemTextW(m_hwnd, IDC_LANGUAGE_COMBO, m_config.targetLanguage.c_str());
@@ -893,6 +913,10 @@ void SettingsWindow::UIToConfig()
         HWND hProv = GetDlgItem(m_hwnd, IDC_PROVIDER_COMBO);
         int idx = static_cast<int>(SendMessageW(hProv, CB_GETCURSEL, 0, 0));
         m_config.providerType = (idx == 0) ? TranslateProvider::DeepSeek : TranslateProvider::DeepSeek;
+
+        HWND hOcr = GetDlgItem(m_hwnd, IDC_OCR_COMBO);
+        int ocrIdx = static_cast<int>(SendMessageW(hOcr, CB_GETCURSEL, 0, 0));
+        m_config.ocrType = (ocrIdx == 0) ? OcrType::WindowsOCR : OcrType::PaddleOCR;
     }
 
     GetDlgItemTextW(m_hwnd, IDC_API_MODEL_EDIT, buf, 1024);
@@ -1445,10 +1469,13 @@ void SettingsWindow::OnStart()
     m_overlay.EnableDrag(false);
 
     // Configure translate client
-    m_client.SetApiKey(m_config.apiKey);
-    m_client.SetApiModel(m_config.apiModel);
-    m_client.SetProvider(m_config.providerType);
-    m_client.SetTargetLanguage(m_config.targetLanguage);
+    m_client = TranslateProviderFactory::CreateProvider(m_config.providerType);
+    if (m_client)
+    {
+        m_client->SetApiKey(m_config.apiKey);
+        m_client->SetApiModel(m_config.apiModel);
+        m_client->SetTargetLanguage(m_config.targetLanguage);
+    }
 
     // Apply appearance to overlay
     m_overlay.SetFontName(m_config.fontName);
@@ -1465,7 +1492,26 @@ void SettingsWindow::OnStart()
     m_overlay.Show();
 
     // Start based on capture mode
-    m_scheduler.SetComponents(&m_capture, &m_client, &m_overlay);
+    m_scheduler.SetComponents(&m_capture, m_client.get(), &m_overlay);
+    
+    // Resolve OCR model paths and configure OCR type
+    {
+        wchar_t cwd[MAX_PATH] = { 0 };
+        GetCurrentDirectoryW(MAX_PATH, cwd);
+        std::wstring baseDir = cwd;
+        for (auto& c : baseDir)
+        {
+            if (c == L'\\') c = L'/';
+        }
+        if (!baseDir.empty() && baseDir.back() != L'/')
+        {
+            baseDir += L'/';
+        }
+        std::wstring detModelDir = baseDir + L"models/PP-OCRv5_mobile_det_infer";
+        std::wstring recModelDir = baseDir + L"models/PP-OCRv5_mobile_rec_infer";
+        m_scheduler.SetOcrConfig(m_config.ocrType, detModelDir, recModelDir);
+    }
+
     m_scheduler.SetScaleRoi(m_config.scaleRoi);
 
     if (m_config.captureMode == CaptureMode::Auto)
@@ -1526,18 +1572,22 @@ void SettingsWindow::OnTestApi()
     UIToConfig();
     UpdateStatus(L"Testing connection...");
 
-    TextTranslateProvider tc;
-    tc.SetApiKey(m_config.apiKey);
-    tc.SetApiModel(m_config.apiModel);
-    tc.SetProvider(m_config.providerType);
-    tc.SetTargetLanguage(m_config.targetLanguage);
+    auto tc = TranslateProviderFactory::CreateProvider(m_config.providerType);
+    if (!tc)
+    {
+        UpdateStatus(L"API Test failed: Invalid translate provider.");
+        return;
+    }
+    tc->SetApiKey(m_config.apiKey);
+    tc->SetApiModel(m_config.apiModel);
+    tc->SetTargetLanguage(m_config.targetLanguage);
 
-    std::wstring result = tc.Translate(L"Hello world! This is a test connection message.");
+    std::wstring result = tc->Translate(L"Hello world! This is a test connection message.");
 
     if (!result.empty())
         UpdateStatus(L"DeepSeek OK. Response: " + result);
     else
-        UpdateStatus(L"DeepSeek error: " + tc.GetLastError());
+        UpdateStatus(L"DeepSeek error: " + tc->GetLastError());
 }
 
 void SettingsWindow::OnToggleDrag()
@@ -1569,6 +1619,9 @@ void SettingsWindow::OnSave()
     UIToConfig();
     m_config.Save(GetIniPath());
     UpdateStatus(L"Settings saved.");
+    
+    // Reset region OCR to allow reloading with a new type next time
+    m_regionOcr.reset();
 }
 
 void SettingsWindow::OnColorPick(COLORREF& colorRef)
@@ -1746,7 +1799,7 @@ void SettingsWindow::PerformRegionCapture(const RECT& region)
     cv::cvtColor(mat, bgrMat, cv::COLOR_BGRA2BGR);
 
     // Lazy-initialize Region OCR engine
-    if (!m_regionOcr.IsInitialized())
+    if (!m_regionOcr || !m_regionOcr->IsInitialized())
     {
         wchar_t cwd[MAX_PATH] = { 0 };
         GetCurrentDirectoryW(MAX_PATH, cwd);
@@ -1763,9 +1816,11 @@ void SettingsWindow::PerformRegionCapture(const RECT& region)
         std::wstring recModelDir = baseDir + L"models/PP-OCRv5_mobile_rec_infer";
 
         UpdateStatus(L"Initializing OCR modules for region selection...");
-        if (!m_regionOcr.Initialize(detModelDir, recModelDir))
+        m_regionOcr = OcrFactory::CreateEngine(m_config.ocrType, detModelDir, recModelDir);
+        if (!m_regionOcr || !m_regionOcr->Initialize())
         {
             UpdateStatus(L"Region OCR Error: Failed to initialize models.");
+            m_regionOcr.reset();
             auto* data = new RegionResultData{ region, L"" };
             PostMessageW(m_hwnd, WM_SHOW_REGION_RESULT, 0, reinterpret_cast<LPARAM>(data));
             return;
@@ -1774,16 +1829,24 @@ void SettingsWindow::PerformRegionCapture(const RECT& region)
     }
 
     UpdateStatus(L"Performing OCR on selected region...");
-    DetectionResult detection = m_regionOcr.Detect(bgrMat);
-    if (detection.empty())
+    OcrResult ocrResult;
+    if (m_regionOcr->SupportsTwoPhase())
     {
-        UpdateStatus(L"No text detected in selected region.");
-        auto* data = new RegionResultData{ region, L"" };
-        PostMessageW(m_hwnd, WM_SHOW_REGION_RESULT, 0, reinterpret_cast<LPARAM>(data));
-        return;
+        DetectionResult detection = m_regionOcr->Detect(bgrMat);
+        if (detection.empty())
+        {
+            UpdateStatus(L"No text detected in selected region.");
+            auto* data = new RegionResultData{ region, L"" };
+            PostMessageW(m_hwnd, WM_SHOW_REGION_RESULT, 0, reinterpret_cast<LPARAM>(data));
+            return;
+        }
+        ocrResult = m_regionOcr->Recognize(detection);
+    }
+    else
+    {
+        ocrResult = m_regionOcr->Recognize(bgrMat);
     }
 
-    OcrResult ocrResult = m_regionOcr.Recognize(detection);
     std::wstring ocrText = Utf8ToWide(ocrResult.ConcatText());
     if (ocrText.empty())
     {
@@ -1794,16 +1857,22 @@ void SettingsWindow::PerformRegionCapture(const RECT& region)
     }
 
     UpdateStatus(L"Translating: " + ocrText);
-    TextTranslateProvider client;
-    client.SetApiKey(m_config.apiKey);
-    client.SetApiModel(m_config.apiModel);
-    client.SetProvider(m_config.providerType);
-    client.SetTargetLanguage(m_config.targetLanguage);
+    auto client = TranslateProviderFactory::CreateProvider(m_config.providerType);
+    if (!client)
+    {
+        UpdateStatus(L"Translation API error: Invalid provider.");
+        auto* data = new RegionResultData{ region, L"" };
+        PostMessageW(m_hwnd, WM_SHOW_REGION_RESULT, 0, reinterpret_cast<LPARAM>(data));
+        return;
+    }
+    client->SetApiKey(m_config.apiKey);
+    client->SetApiModel(m_config.apiModel);
+    client->SetTargetLanguage(m_config.targetLanguage);
 
-    std::wstring result = client.Translate(ocrText);
+    std::wstring result = client->Translate(ocrText);
     if (result.empty())
     {
-        UpdateStatus(L"Translation API error: " + client.GetLastError());
+        UpdateStatus(L"Translation API error: " + client->GetLastError());
         auto* data = new RegionResultData{ region, L"" };
         PostMessageW(m_hwnd, WM_SHOW_REGION_RESULT, 0, reinterpret_cast<LPARAM>(data));
         return;

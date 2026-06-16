@@ -1,4 +1,4 @@
-#include "src/network/TextTranslateProvider.h"
+#include "src/network/DeepSeekTranslateProvider.h"
 #include <windows.h>
 #include <winhttp.h>
 #include <sstream>
@@ -134,33 +134,22 @@ static bool ParseDeepSeekResponse(const std::string& json, std::wstring& outText
     return true;
 }
 
-TextTranslateProvider::TextTranslateProvider() = default;
-TextTranslateProvider::~TextTranslateProvider() = default;
+DeepSeekTranslateProvider::DeepSeekTranslateProvider() = default;
+DeepSeekTranslateProvider::~DeepSeekTranslateProvider() = default;
 
-void TextTranslateProvider::SetApiUrl(const std::wstring& url) { m_apiUrl = url; }
-void TextTranslateProvider::SetApiKey(const std::wstring& key) { m_apiKey = key; }
-void TextTranslateProvider::SetApiModel(const std::wstring& model) { m_apiModel = model; }
-void TextTranslateProvider::SetTargetLanguage(const std::wstring& targetLanguage) { m_targetLanguage = targetLanguage; }
-void TextTranslateProvider::SetProvider(TranslateProvider provider) { m_provider = provider; }
+void DeepSeekTranslateProvider::SetApiUrl(const std::wstring& url) { m_apiUrl = url; }
+void DeepSeekTranslateProvider::SetApiKey(const std::wstring& key) { m_apiKey = key; }
+void DeepSeekTranslateProvider::SetApiModel(const std::wstring& model) { m_apiModel = model; }
+void DeepSeekTranslateProvider::SetTargetLanguage(const std::wstring& targetLanguage) { m_targetLanguage = targetLanguage; }
 
-std::wstring TextTranslateProvider::Translate(const std::wstring& text)
-{
-    if (m_provider == TranslateProvider::DeepSeek)
-    {
-        return TranslateDeepSeek(text);
-    }
-    m_lastError = L"Unsupported provider.";
-    return {};
-}
-
-std::wstring TextTranslateProvider::TranslateDeepSeek(const std::wstring& text)
+std::wstring DeepSeekTranslateProvider::Translate(const std::wstring& text)
 {
     if (text.empty())
     {
         return {};
     }
 
-    std::wstring url = L"https://api.deepseek.com/chat/completions";
+    std::wstring url = m_apiUrl.empty() ? L"https://api.deepseek.com/chat/completions" : m_apiUrl;
 
     // Parse URL using WinHttpCrackUrl
     URL_COMPONENTS uc{};
