@@ -372,8 +372,8 @@ bool TranslationPipeline::PerformOcr(const cv::Mat& frameMat, OcrResult& outOcrR
         else
         {
             // Execute standard single-phase execution (e.g. Windows OCR)
-            m_lastBoxes.clear();
             outOcrResult = m_ocrEngine->Recognize(frameMat);
+            m_lastBoxes = outOcrResult.boxes;
         }
     }
     catch (const std::exception& e)

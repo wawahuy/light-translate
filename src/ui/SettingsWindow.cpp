@@ -755,6 +755,7 @@ void SettingsWindow::CreateSystemTab(int x, int y, int w)
 
     h = MakeCombo(x + 135, cy, 180, 150, IDC_OCR_COMBO);
     SendMessageW(h, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"PaddleOCR (Default)"));
+    SendMessageW(h, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Windows OCR"));
     m_systemControls.push_back(h);
 }
 
@@ -953,7 +954,7 @@ void SettingsWindow::UIToConfig()
 
         HWND hOcr = GetDlgItem(m_hwnd, IDC_OCR_COMBO);
         int ocrIdx = static_cast<int>(SendMessageW(hOcr, CB_GETCURSEL, 0, 0));
-        m_config.ocrType = OcrType::PaddleOCR;
+        m_config.ocrType = (ocrIdx == 0) ? OcrType::PaddleOCR : OcrType::WindowsOCR;
 
         HWND hDisp = GetDlgItem(m_hwnd, IDC_DISPLAY_MODE_COMBO);
         int dispIdx = static_cast<int>(SendMessageW(hDisp, CB_GETCURSEL, 0, 0));

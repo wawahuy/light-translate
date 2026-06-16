@@ -141,6 +141,7 @@ OcrResult PaddleOcrEngine::Recognize(const DetectionResult& detection)
     result.texts.reserve(orderedResults.size());
     for (auto& rec : orderedResults)
         result.texts.push_back(rec.rec_text);
+    result.boxes = detection.boxes;
 
     return result;
 }

@@ -6,7 +6,8 @@
 // Supported OCR Engine types.
 enum class OcrType : int
 {
-    PaddleOCR  = 0
+    PaddleOCR  = 0,
+    WindowsOCR = 1
 };
 
 // Result of the detection + crop phase (before recognition).
@@ -23,6 +24,7 @@ struct DetectionResult
 struct OcrResult
 {
     std::vector<std::string> texts;  // Recognized text per region
+    std::vector<std::vector<cv::Point2f>> boxes; // Polygons of detected text boxes (sorted)
 
     bool empty() const { return texts.empty(); }
 
