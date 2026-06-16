@@ -17,7 +17,7 @@ struct AppConfig
 {
     // -- API ------------------------------------------------------------------
     TranslateProvider providerType = TranslateProvider::DeepSeek;
-    OcrType ocrType = OcrType::WindowsOCR; // Default to Windows OCR
+    OcrType ocrType = OcrType::PaddleOCR; // Default to PaddleOCR
     std::wstring apiUrl = L"https://api.deepseek.com/chat/completions";
     std::wstring apiModel = L"deepseek-chat";
     std::wstring apiKey = L"";

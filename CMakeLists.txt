@@ -247,7 +247,6 @@ target_link_libraries(${APP_NAME} ${DEPS}
   comdlg32
   winhttp
   winmm
-  windowsapp
 )
 target_compile_definitions(${APP_NAME} PRIVATE
   UNICODE

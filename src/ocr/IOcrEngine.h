@@ -6,8 +6,7 @@
 // Supported OCR Engine types.
 enum class OcrType : int
 {
-    PaddleOCR  = 0,
-    WindowsOCR = 1
+    PaddleOCR  = 0
 };
 
 // Result of the detection + crop phase (before recognition).

@@ -91,7 +91,7 @@ private:
     std::atomic<bool>    m_networkBusy{ false };
 
     // OCR configuration & engine
-    OcrType              m_ocrType = OcrType::WindowsOCR;
+    OcrType              m_ocrType = OcrType::PaddleOCR;
     std::wstring         m_ocrDetModelDir;
     std::wstring         m_ocrRecModelDir;
     std::unique_ptr<IOcrEngine> m_ocrEngine;
