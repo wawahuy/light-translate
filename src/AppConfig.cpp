@@ -100,7 +100,7 @@ bool AppConfig::Load(const std::wstring& iniPath)
     apiModel = ReadStr(L"API", L"Model", apiModel, f);
     apiKey = ReadStr(L"API", L"Key", apiKey, f);
     targetLanguage = ReadStr(L"API", L"TargetLanguage", targetLanguage, f);
-    providerType = static_cast<TranslateProvider>(ReadInt(L"API", L"Provider", 0, f));
+    providerType = static_cast<TranslateProvider>(ReadInt(L"API", L"Provider", 1, f)); // 1 represents Google
     ocrType = static_cast<OcrType>(ReadInt(L"API", L"OcrType", 0, f)); // 0 represents PaddleOCR
 
     captureRect.left   = ReadInt(L"Capture", L"Left",    0,   f);

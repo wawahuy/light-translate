@@ -42,6 +42,9 @@
 #define IDC_REGION_HOTKEY_EDIT 1040  ///< Region selection hotkey
 #define IDC_SCALE_ROI_EDIT     1041  ///< Scale ROI in percentage
 #define IDC_OCR_COMBO          1042  ///< OCR Engine selection
+#define IDC_STATIC_API_MODEL   1043  ///< Static label for API Model
+#define IDC_STATIC_API_KEY     1044  ///< Static label for API Key
+
 
 
 // === Tray icon ===

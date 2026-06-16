@@ -41,7 +41,7 @@ private:
     void CreateTranslateTab(int x, int y, int w);
     void CreateSystemTab(int x, int y, int w);
     void CreateRegionTab(int x, int y, int w);
-    HWND MakeLabel (int x, int y, int w, int h, const wchar_t* txt);
+    HWND MakeLabel (int x, int y, int w, int h, const wchar_t* txt, UINT id = -1);
     HWND MakeEdit  (int x, int y, int w, int h, UINT id, bool multiLine = false);
     HWND MakeButton(int x, int y, int w, int h, const wchar_t* txt, UINT id);
     HWND MakeCheck (int x, int y, int w, int h, const wchar_t* txt, UINT id);
@@ -55,6 +55,7 @@ private:
     // -- Capture mode ----------------------------------------------------------
     void OnCaptureModeChanged();
     void UpdateCaptureModeUI();
+    void UpdateProviderUI();
 
     // -- Command handlers ------------------------------------------------------
     void OnStart();

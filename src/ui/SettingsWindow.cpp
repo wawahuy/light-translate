@@ -361,11 +361,13 @@ LRESULT SettingsWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
 //  Control creation helpers
 // -----------------------------------------------------------------------------
 
-HWND SettingsWindow::MakeLabel(int x, int y, int w, int h, const wchar_t* txt)
+HWND SettingsWindow::MakeLabel(int x, int y, int w, int h, const wchar_t* txt, UINT id)
 {
     return CreateWindowExW(0, L"STATIC", txt,
         WS_CHILD | WS_VISIBLE | SS_LEFT,
-        x, y, w, h, m_hwnd, nullptr, m_hInstance, nullptr);
+        x, y, w, h, m_hwnd,
+        id == -1 ? nullptr : reinterpret_cast<HMENU>(static_cast<UINT_PTR>(id)),
+        m_hInstance, nullptr);
 }
 
 HWND SettingsWindow::MakeEdit(int x, int y, int w, int h, UINT id, bool multiLine)
@@ -647,6 +649,7 @@ void SettingsWindow::CreateTranslateTab(int x, int y, int w)
     {
         HWND hProv = MakeCombo(x + 85, cy, 160, 80, IDC_PROVIDER_COMBO);
         SendMessageW(hProv, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"DeepSeek"));
+        SendMessageW(hProv, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Google Translate"));
         SendMessageW(hProv, CB_SETCURSEL, 0, 0);
         m_translateControls.push_back(hProv);
     }
@@ -689,14 +692,14 @@ void SettingsWindow::CreateTranslateTab(int x, int y, int w)
     cy += EH + 8;
 
     // API Model
-    h = MakeLabel(x + 8, cy, 75, LH, L"API Model:");
+    h = MakeLabel(x + 8, cy, 75, LH, L"API Model:", IDC_STATIC_API_MODEL);
     m_translateControls.push_back(h);
     h = MakeEdit(x + 85, cy, 160, EH, IDC_API_MODEL_EDIT);
     m_translateControls.push_back(h);
     cy += EH + 8;
 
     // API Key
-    h = MakeLabel(x + 8, cy, 75, LH, L"API Key:");
+    h = MakeLabel(x + 8, cy, 75, LH, L"API Key:", IDC_STATIC_API_KEY);
     m_translateControls.push_back(h);
     h = MakeEdit(x + 85, cy, w - 95, EH, IDC_API_KEY_EDIT);
     m_translateControls.push_back(h);
@@ -840,6 +843,25 @@ void SettingsWindow::UpdateCaptureModeUI()
         ShowWindow(h, isAuto ? SW_HIDE : SW_SHOW);
 }
 
+void SettingsWindow::UpdateProviderUI()
+{
+    HWND hProv = GetDlgItem(m_hwnd, IDC_PROVIDER_COMBO);
+    int idx = static_cast<int>(SendMessageW(hProv, CB_GETCURSEL, 0, 0));
+    TranslateProvider provider = (idx == 0) ? TranslateProvider::DeepSeek : TranslateProvider::Google;
+
+    ProviderUIConfig uiConfig = TranslateProviderFactory::GetUIConfig(provider);
+
+    int cmdModel = uiConfig.showApiModel ? SW_SHOW : SW_HIDE;
+    ShowWindow(GetDlgItem(m_hwnd, IDC_STATIC_API_MODEL), cmdModel);
+    ShowWindow(GetDlgItem(m_hwnd, IDC_API_MODEL_EDIT), cmdModel);
+
+    int cmdKey = uiConfig.showApiKey ? SW_SHOW : SW_HIDE;
+    ShowWindow(GetDlgItem(m_hwnd, IDC_STATIC_API_KEY), cmdKey);
+    ShowWindow(GetDlgItem(m_hwnd, IDC_API_KEY_EDIT), cmdKey);
+
+    InvalidateRect(m_hwnd, nullptr, TRUE);
+}
+
 // -----------------------------------------------------------------------------
 //  Config <-> UI
 // -----------------------------------------------------------------------------
@@ -849,7 +871,7 @@ void SettingsWindow::ConfigToUI()
     // Provider
     HWND hProv = GetDlgItem(m_hwnd, IDC_PROVIDER_COMBO);
     SendMessageW(hProv, CB_SETCURSEL,
-        m_config.providerType == TranslateProvider::DeepSeek ? 0 : 0, 0);
+        (m_config.providerType == TranslateProvider::DeepSeek) ? 0 : 1, 0);
 
     // OCR Type
     HWND hOcr = GetDlgItem(m_hwnd, IDC_OCR_COMBO);
@@ -901,6 +923,7 @@ void SettingsWindow::ConfigToUI()
         m_config.strokeEnabled ? BST_CHECKED : BST_UNCHECKED);
 
     UpdateRegionLabel();
+    UpdateProviderUI();
 }
 
 void SettingsWindow::UIToConfig()
@@ -911,7 +934,7 @@ void SettingsWindow::UIToConfig()
     {
         HWND hProv = GetDlgItem(m_hwnd, IDC_PROVIDER_COMBO);
         int idx = static_cast<int>(SendMessageW(hProv, CB_GETCURSEL, 0, 0));
-        m_config.providerType = (idx == 0) ? TranslateProvider::DeepSeek : TranslateProvider::DeepSeek;
+        m_config.providerType = (idx == 0) ? TranslateProvider::DeepSeek : TranslateProvider::Google;
 
         HWND hOcr = GetDlgItem(m_hwnd, IDC_OCR_COMBO);
         int ocrIdx = static_cast<int>(SendMessageW(hOcr, CB_GETCURSEL, 0, 0));
@@ -1610,7 +1633,11 @@ void SettingsWindow::OnProviderChanged()
     HWND hProv = GetDlgItem(m_hwnd, IDC_PROVIDER_COMBO);
     int idx = static_cast<int>(SendMessageW(hProv, CB_GETCURSEL, 0, 0));
     if (idx == 0)
-        UpdateStatus(L"Provider: DeepSeek - s\u1EED d\u1EE5ng API c\u1EE7a DeepSeek qua HTTP REST.");
+        UpdateStatus(L"Provider: DeepSeek - uses DeepSeek API via HTTP REST.");
+    else if (idx == 1)
+        UpdateStatus(L"Provider: Google Translate - uses public Google Translate API.");
+
+    UpdateProviderUI();
 }
 
 void SettingsWindow::OnSave()
