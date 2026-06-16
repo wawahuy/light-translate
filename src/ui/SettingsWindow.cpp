@@ -148,11 +148,14 @@ LRESULT SettingsWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
         m_overlay.SetSize(m_config.overlayWidth, m_config.overlayHeight);
         m_overlay.OnMoved = [&](int x, int y)
             {
-                m_config.overlayPos = { x, y };
-                int w, h;
-                m_overlay.GetSize(w, h);
-                m_config.overlayWidth = w;
-                m_config.overlayHeight = h;
+                if (m_config.displayMode != DisplayMode::InPlace)
+                {
+                    m_config.overlayPos = { x, y };
+                    int w, h;
+                    m_overlay.GetSize(w, h);
+                    m_config.overlayWidth = w;
+                    m_config.overlayHeight = h;
+                }
                 // Update edit boxes (post to avoid nested SendMessage)
                 PostMessageW(m_hwnd, WM_UPDATE_STATUS,
                     0, reinterpret_cast<LPARAM>(nullptr));
@@ -281,6 +284,10 @@ LRESULT SettingsWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
             // Capture mode combo
         case IDC_CAPTURE_MODE_COMBO:
             if (HIWORD(wParam) == CBN_SELCHANGE) OnCaptureModeChanged();
+            break;
+            // Display mode combo
+        case IDC_DISPLAY_MODE_COMBO:
+            if (HIWORD(wParam) == CBN_SELCHANGE) OnDisplayModeChanged();
             break;
             // Tray menu
         case ID_TRAY_SHOW:
@@ -603,6 +610,7 @@ void SettingsWindow::CreateRealtimeTab(int x, int y, int w)
 
     h = MakeLabel(x + 8, cy, 72, LH, L"Position:");
     m_realtimeControls.push_back(h);
+    m_overlayPosControls.push_back(h);
     {
         HWND hPos = CreateWindowExW(0, L"STATIC", L"-",
             WS_CHILD | WS_VISIBLE | SS_LEFT,
@@ -610,35 +618,46 @@ void SettingsWindow::CreateRealtimeTab(int x, int y, int w)
             reinterpret_cast<HMENU>(static_cast<UINT_PTR>(IDC_OVERLAY_POS_LABEL)),
             m_hInstance, nullptr);
         m_realtimeControls.push_back(hPos);
+        m_overlayPosControls.push_back(hPos);
     }
     cy += EH + 6;
 
     h = MakeLabel(x + 8, cy, 60, LH, L"Font:");
     m_realtimeControls.push_back(h);
+    m_overlayPosControls.push_back(h);
     h = MakeEdit(x + 70, cy, 180, EH, IDC_FONT_NAME_EDIT);
     m_realtimeControls.push_back(h);
+    m_overlayPosControls.push_back(h);
     h = MakeLabel(x + 260, cy, 40, LH, L"Size:");
     m_realtimeControls.push_back(h);
+    m_overlayPosControls.push_back(h);
     h = MakeEdit(x + 302, cy, 55, EH, IDC_FONT_SIZE_EDIT);
     m_realtimeControls.push_back(h);
+    m_overlayPosControls.push_back(h);
     cy += EH + 8;
 
     h = MakeLabel(x + 8, cy, 80, LH, L"Text Color:");
     m_realtimeControls.push_back(h);
+    m_overlayPosControls.push_back(h);
     h = MakeButton(x + 90, cy, 90, BH, L"Choose\u2026", IDC_TEXT_COLOR_BTN);
     m_realtimeControls.push_back(h);
+    m_overlayPosControls.push_back(h);
     cy += BH + 4;
 
     h = MakeCheck(x + 8, cy, 80, LH, L"Shadow", IDC_SHADOW_CHECK);
     m_realtimeControls.push_back(h);
+    m_overlayPosControls.push_back(h);
     h = MakeButton(x + 90, cy, 90, BH, L"Color\u2026", IDC_SHADOW_COLOR_BTN);
     m_realtimeControls.push_back(h);
+    m_overlayPosControls.push_back(h);
     cy += BH + 4;
 
     h = MakeCheck(x + 8, cy, 80, LH, L"Stroke", IDC_STROKE_CHECK);
     m_realtimeControls.push_back(h);
+    m_overlayPosControls.push_back(h);
     h = MakeButton(x + 90, cy, 90, BH, L"Color\u2026", IDC_STROKE_COLOR_BTN);
     m_realtimeControls.push_back(h);
+    m_overlayPosControls.push_back(h);
 }
 
 // -----------------------------------------------------------------------------
@@ -754,8 +773,8 @@ void SettingsWindow::CreateSystemTab(int x, int y, int w)
     m_systemControls.push_back(h);
 
     h = MakeCombo(x + 135, cy, 180, 150, IDC_OCR_COMBO);
-    SendMessageW(h, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"PaddleOCR (Default)"));
-    SendMessageW(h, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Windows OCR"));
+    SendMessageW(h, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"PaddleOCR"));
+    SendMessageW(h, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Windows OCR (Default)"));
     m_systemControls.push_back(h);
 }
 
@@ -828,9 +847,16 @@ void SettingsWindow::ShowTab(int index)
     for (HWND h : m_systemControls)
         ShowWindow(h, showSystem);
 
-    // If showing Realtime tab, also apply capture mode visibility
+    // If showing Realtime tab, restore conditional visibility
     if (index == 0)
+    {
         UpdateCaptureModeUI();
+        UpdateDisplayModeUI(); // keep overlay-only controls hidden when in InPlace mode
+    }
+
+    // If showing Translate tab, restore conditional visibility
+    if (index == 2)
+        UpdateProviderUI(); // keep API Key/Model hidden when Google Translate is selected
 }
 
 // -----------------------------------------------------------------------------
@@ -854,7 +880,43 @@ void SettingsWindow::UpdateCaptureModeUI()
     for (HWND h : m_hotkeyModeControls)
         ShowWindow(h, isAuto ? SW_HIDE : SW_SHOW);
 }
+void SettingsWindow::OnDisplayModeChanged()
+{
+    UIToConfig();
+    UpdateDisplayModeUI();
+    SyncHelperWindows();
 
+    if (m_running)
+    {
+        m_scheduler.SetDisplayMode(m_config.displayMode);
+        if (m_config.displayMode == DisplayMode::InPlace)
+        {
+            m_overlay.SetPosition(m_config.captureRect.left, m_config.captureRect.top);
+            m_overlay.SetSize(m_config.captureRect.right - m_config.captureRect.left,
+                              m_config.captureRect.bottom - m_config.captureRect.top);
+            m_overlay.SetInPlaceText(L"", {});
+        }
+        else
+        {
+            m_overlay.SetPosition(m_config.overlayPos.x, m_config.overlayPos.y);
+            m_overlay.SetSize(m_config.overlayWidth, m_config.overlayHeight);
+            m_overlay.SetText(L"");
+        }
+        m_overlay.Show();
+    }
+}
+
+void SettingsWindow::UpdateDisplayModeUI()
+{
+    HWND hDisp = GetDlgItem(m_hwnd, IDC_DISPLAY_MODE_COMBO);
+    int sel = static_cast<int>(SendMessageW(hDisp, CB_GETCURSEL, 0, 0));
+    bool isInPlace = (sel == 0);
+
+    for (HWND h : m_overlayPosControls)
+        ShowWindow(h, isInPlace ? SW_HIDE : SW_SHOW);
+
+    InvalidateRect(m_hwnd, nullptr, TRUE);
+}
 void SettingsWindow::UpdateProviderUI()
 {
     HWND hProv = GetDlgItem(m_hwnd, IDC_PROVIDER_COMBO);
@@ -880,10 +942,11 @@ void SettingsWindow::UpdateProviderUI()
 
 void SettingsWindow::ConfigToUI()
 {
-    // Provider
+    // Provider — set selection first, then immediately update visibility of API fields
     HWND hProv = GetDlgItem(m_hwnd, IDC_PROVIDER_COMBO);
     SendMessageW(hProv, CB_SETCURSEL,
         (m_config.providerType == TranslateProvider::DeepSeek) ? 0 : 1, 0);
+    UpdateProviderUI(); // apply hide/show of API Key/Model right after selecting provider
 
     // OCR Type
     HWND hOcr = GetDlgItem(m_hwnd, IDC_OCR_COMBO);
@@ -939,12 +1002,13 @@ void SettingsWindow::ConfigToUI()
         m_config.strokeEnabled ? BST_CHECKED : BST_UNCHECKED);
 
     UpdateRegionLabel();
-    UpdateProviderUI();
+    UpdateDisplayModeUI(); // apply hide/show of overlay-only controls based on display mode
 }
 
 void SettingsWindow::UIToConfig()
 {
     wchar_t buf[1024]{};
+    DisplayMode oldMode = m_config.displayMode;
 
     // Provider type
     {
@@ -991,10 +1055,18 @@ void SettingsWindow::UIToConfig()
 
     // Hotkey: m_config.hotkeyVk and m_config.hotkeyMod are updated directly in real time by the subclass proc.
 
-    // Position is read directly from the overlay window (set by drag)
-    int ox, oy;
-    m_overlay.GetPosition(ox, oy);
-    m_config.overlayPos = { static_cast<LONG>(ox), static_cast<LONG>(oy) };
+    if (m_config.displayMode == DisplayMode::Overlay && oldMode == DisplayMode::Overlay)
+    {
+        // Position is read directly from the overlay window (set by drag)
+        int ox, oy;
+        m_overlay.GetPosition(ox, oy);
+        m_config.overlayPos = { static_cast<LONG>(ox), static_cast<LONG>(oy) };
+
+        int ow, oh;
+        m_overlay.GetSize(ow, oh);
+        m_config.overlayWidth = ow;
+        m_config.overlayHeight = oh;
+    }
 
     GetDlgItemTextW(m_hwnd, IDC_FONT_NAME_EDIT, buf, 256);
     m_config.fontName = buf;

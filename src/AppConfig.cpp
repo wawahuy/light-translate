@@ -72,10 +72,13 @@ void AppConfig::Save(const std::wstring& iniPath) const
     WriteInt(L"Capture", L"RegionHotkeyVk",  static_cast<int>(regionHotkeyVk), f);
     WriteInt(L"Capture", L"RegionHotkeyMod", static_cast<int>(regionHotkeyMod), f);
 
-    WriteInt(L"Overlay", L"X",       overlayPos.x, f);
-    WriteInt(L"Overlay", L"Y",       overlayPos.y, f);
-    WriteInt(L"Overlay", L"W",       overlayWidth, f);
-    WriteInt(L"Overlay", L"H",       overlayHeight, f);
+    if (displayMode != DisplayMode::InPlace)
+    {
+        WriteInt(L"Overlay", L"X",       overlayPos.x, f);
+        WriteInt(L"Overlay", L"Y",       overlayPos.y, f);
+        WriteInt(L"Overlay", L"W",       overlayWidth, f);
+        WriteInt(L"Overlay", L"H",       overlayHeight, f);
+    }
     WriteInt(L"SettingsWindow", L"X", settingsWndPos.x, f);
     WriteInt(L"SettingsWindow", L"Y", settingsWndPos.y, f);
 

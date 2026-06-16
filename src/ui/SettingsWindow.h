@@ -55,6 +55,8 @@ private:
     // -- Capture mode ----------------------------------------------------------
     void OnCaptureModeChanged();
     void UpdateCaptureModeUI();
+    void OnDisplayModeChanged();
+    void UpdateDisplayModeUI();
     void UpdateProviderUI();
 
     // -- Command handlers ------------------------------------------------------
@@ -127,6 +129,7 @@ private:
     // Capture mode sub-controls (conditionally shown within Realtime tab)
     std::vector<HWND>     m_autoModeControls;    ///< Interval edit (Auto mode)
     std::vector<HWND>     m_hotkeyModeControls;  ///< Hotkey edit (Hotkey mode)
+    std::vector<HWND>     m_overlayPosControls;  ///< Position controls (Overlay mode)
 
     AppConfig        m_config;
     CaptureEngine    m_capture;
