@@ -946,7 +946,7 @@ void SettingsWindow::UpdateDisplayModeUI()
     bool isInPlace = (sel == 0);
 
     for (HWND h : m_overlayPosControls)
-        ShowWindow(h, isInPlace ? SW_HIDE : SW_SHOW);
+        EnableWindow(h, !isInPlace);
 
     InvalidateRect(m_hwnd, nullptr, TRUE);
 }
