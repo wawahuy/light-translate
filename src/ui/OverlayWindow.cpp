@@ -314,12 +314,23 @@ void OverlayWindow::Redraw()
                     Gdiplus::RectF measuredRect;
                     g.MeasureString(m_text.c_str(), -1, &font, Gdiplus::PointF(0.0f, 0.0f), &measureFmt, &measuredRect);
 
-                    if (boxW < measuredRect.Width)
+                    float reqW = measuredRect.Width + m_strokeWidth * 2.0f + 20.0f;
+                    float reqH = measuredRect.Height + m_strokeWidth * 2.0f + 12.0f;
+
+                    if (boxW < reqW)
                     {
                         // Expand the width symmetrically around the center
                         float centerX = boxMinX + boxW / 2.0f;
-                        boxMinX = centerX - measuredRect.Width / 2.0f;
-                        boxW = measuredRect.Width;
+                        boxMinX = centerX - reqW / 2.0f;
+                        boxW = reqW;
+                    }
+
+                    if (boxH < reqH)
+                    {
+                        // Expand the height symmetrically around the center
+                        float centerY = boxMinY + boxH / 2.0f;
+                        boxMinY = centerY - reqH / 2.0f;
+                        boxH = reqH;
                     }
 
                     float newMinX = std::max(0.0f, boxMinX);
@@ -338,7 +349,7 @@ void OverlayWindow::Redraw()
                 Gdiplus::SolidBrush blackBrush(Gdiplus::Color(255, 0, 0, 0));
                 g.FillRectangle(&blackBrush, layoutRect);
 
-                fmt.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap);
+                fmt.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap | Gdiplus::StringFormatFlagsNoClip);
                 fmt.SetAlignment(Gdiplus::StringAlignmentCenter);
                 fmt.SetLineAlignment(Gdiplus::StringAlignmentCenter);
             }
