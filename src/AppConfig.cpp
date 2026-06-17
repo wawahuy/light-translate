@@ -89,6 +89,13 @@ void AppConfig::Save(const std::wstring& iniPath) const
     WriteInt(L"Font", L"ShadowColor",static_cast<int>(shadowColor), f);
     WriteInt(L"Font", L"Stroke",     strokeEnabled ? 1 : 0,         f);
     WriteInt(L"Font", L"StrokeColor",static_cast<int>(strokeColor), f);
+
+    WriteInt(L"ROI", L"Active",    roiActive ? 1 : 0, f);
+    WriteInt(L"ROI", L"TimeoutMs", roiTimeoutMs,      f);
+    WriteInt(L"ROI", L"Left",      roiRect.left,      f);
+    WriteInt(L"ROI", L"Top",       roiRect.top,       f);
+    WriteInt(L"ROI", L"Right",     roiRect.right,     f);
+    WriteInt(L"ROI", L"Bottom",    roiRect.bottom,    f);
 }
 
 // -- AppConfig::Load -----------------------------------------------------------
@@ -140,6 +147,13 @@ bool AppConfig::Load(const std::wstring& iniPath)
     shadowColor = static_cast<COLORREF>(ReadInt(L"Font", L"ShadowColor", static_cast<int>(shadowColor), f));
     strokeEnabled = ReadInt(L"Font", L"Stroke",    1,  f) != 0;
     strokeColor = static_cast<COLORREF>(ReadInt(L"Font", L"StrokeColor", static_cast<int>(strokeColor), f));
+
+    roiActive    = ReadInt(L"ROI", L"Active",    1,    f) != 0;
+    roiTimeoutMs = ReadInt(L"ROI", L"TimeoutMs", 3000, f);
+    roiRect.left = ReadInt(L"ROI", L"Left",      0,    f);
+    roiRect.top  = ReadInt(L"ROI", L"Top",       0,    f);
+    roiRect.right= ReadInt(L"ROI", L"Right",     100,  f);
+    roiRect.bottom=ReadInt(L"ROI", L"Bottom",    100,  f);
 
     return true;
 }

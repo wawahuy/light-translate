@@ -36,6 +36,13 @@ void TranslationPipeline::SetOcrConfig(OcrType type, const std::wstring& detDir,
     m_ocrRecModelDir = recDir;
 }
 
+void TranslationPipeline::SetRoiConfig(bool active, int timeoutMs, RECT roiRect)
+{
+    m_roiActive = active;
+    m_roiTimeoutMs = timeoutMs;
+    m_roiRect = roiRect;
+}
+
 bool TranslationPipeline::Start(int intervalMs)
 {
     if (m_running.load()) return true;
@@ -44,6 +51,8 @@ bool TranslationPipeline::Start(int intervalMs)
     m_translationHistory.clear();
     m_lastTranslateTime = 0;
     m_lastSeenTime = 0;
+    m_lastTextSeenTime = GetTickCount64();
+    m_roiDetectionActive = false;
 
     m_intervalMs.store(intervalMs);
     m_shouldStop.store(false);
@@ -126,6 +135,8 @@ void TranslationPipeline::Stop()
         m_ocrEngine->Reset();
         m_ocrEngine.reset();
     }
+    m_roiDetectionActive = false;
+    m_lastTextSeenTime = 0;
     m_boxDiffDetector.Reset();
 }
 
@@ -337,6 +348,56 @@ bool TranslationPipeline::InitializeOcrEngine()
 
 bool TranslationPipeline::PerformOcr(const cv::Mat& frameMat, OcrResult& outOcrResult)
 {
+    // Handle ROI Detection transition if active
+    if (m_roiActive)
+    {
+        if (m_roiDetectionActive)
+        {
+            double factor = 1.0;
+            if (m_scaleRoi.load() > 0 && m_scaleRoi.load() != 100)
+            {
+                factor = m_scaleRoi.load() / 100.0;
+            }
+
+            int rx = static_cast<int>(m_roiRect.left * factor);
+            int ry = static_cast<int>(m_roiRect.top * factor);
+            int rw = static_cast<int>((m_roiRect.right - m_roiRect.left) * factor);
+            int rh = static_cast<int>((m_roiRect.bottom - m_roiRect.top) * factor);
+
+            cv::Rect cropRect(rx, ry, rw, rh);
+            cropRect = cropRect & cv::Rect(0, 0, frameMat.cols, frameMat.rows);
+            
+            bool roiHasText = false;
+            if (cropRect.width > 0 && cropRect.height > 0)
+            {
+                // Clone the cropped region to ensure a continuous memory layout for the OCR engines
+                cv::Mat roiFrame = frameMat(cropRect).clone();
+                if (m_ocrEngine->SupportsTwoPhase())
+                {
+                    DetectionResult detection = m_ocrEngine->Detect(roiFrame);
+                    roiHasText = !detection.empty();
+                }
+                else
+                {
+                    OcrResult ocrResultRoi = m_ocrEngine->Recognize(roiFrame);
+                    roiHasText = !ocrResultRoi.empty();
+                }
+            }
+            
+            if (roiHasText)
+            {
+                m_roiDetectionActive = false;
+                m_lastTextSeenTime = GetTickCount64();
+                if (OnStatus) OnStatus(L"Text detected in ROI. Deactivating ROI mode.");
+                // Fall through to run full OCR on this tick
+            }
+            else
+            {
+                return false;
+            }
+        }
+    }
+
     try
     {
         // 1. Check if box regions are unchanged (works for all engines)
@@ -345,6 +406,10 @@ bool TranslationPipeline::PerformOcr(const cv::Mat& frameMat, OcrResult& outOcrR
             if (!m_boxDiffDetector.DetectChange(frameMat, 1.0))
             {
                 m_lastSeenTime = GetTickCount64();
+                if (m_roiActive)
+                {
+                    m_lastTextSeenTime = GetTickCount64();
+                }
                 if (OnStatus) OnStatus(L"Skipped (Box regions unchanged)");
                 
                 // Populate outOcrResult with cached boxes and text to prevent clearing screen
@@ -355,35 +420,59 @@ bool TranslationPipeline::PerformOcr(const cv::Mat& frameMat, OcrResult& outOcrR
         }
 
         // 2. Perform recognition based on engine support
+        bool hasText = false;
         if (m_ocrEngine->SupportsTwoPhase())
         {
             DetectionResult detection = m_ocrEngine->Detect(frameMat);
-            if (detection.empty())
+            if (!detection.empty())
+            {
+                m_boxDiffDetector.Update(detection.boxes, detection.regionGrays);
+                m_lastBoxes = detection.boxes;
+                outOcrResult = m_ocrEngine->Recognize(detection);
+                hasText = !outOcrResult.empty();
+            }
+            else
             {
                 m_lastBoxes.clear();
                 m_boxDiffDetector.Reset();
-                return false;
             }
-
-            m_boxDiffDetector.Update(detection.boxes, detection.regionGrays);
-            m_lastBoxes = detection.boxes;
-            outOcrResult = m_ocrEngine->Recognize(detection);
         }
         else
         {
             // Execute standard single-phase execution (e.g. Windows OCR)
             outOcrResult = m_ocrEngine->Recognize(frameMat);
-            if (outOcrResult.empty())
+            if (!outOcrResult.empty())
+            {
+                // Update BoxDiffDetector for single-phase engines by cropping the frame
+                m_boxDiffDetector.Update(frameMat, outOcrResult.boxes);
+                m_lastBoxes = outOcrResult.boxes;
+                hasText = true;
+            }
+            else
             {
                 m_lastBoxes.clear();
                 m_boxDiffDetector.Reset();
-                return false;
             }
-
-            // Update BoxDiffDetector for single-phase engines by cropping the frame
-            m_boxDiffDetector.Update(frameMat, outOcrResult.boxes);
-            m_lastBoxes = outOcrResult.boxes;
         }
+
+        if (m_roiActive)
+        {
+            if (hasText)
+            {
+                m_lastTextSeenTime = GetTickCount64();
+            }
+            else
+            {
+                if (GetTickCount64() - m_lastTextSeenTime > static_cast<ULONGLONG>(m_roiTimeoutMs))
+                {
+                    m_roiDetectionActive = true;
+                    m_boxDiffDetector.Reset();
+                    if (OnStatus) OnStatus(L"Idle timeout exceeded. Activating ROI mode.");
+                }
+            }
+        }
+
+        return hasText;
     }
     catch (const std::exception& e)
     {
@@ -395,8 +484,6 @@ bool TranslationPipeline::PerformOcr(const cv::Mat& frameMat, OcrResult& outOcrR
         if (OnStatus) OnStatus(L"OCR Processing Unknown Exception occurred.");
         return false;
     }
-
-    return !outOcrResult.empty();
 }
 
 void TranslationPipeline::TranslateAndShow(const OcrResult& ocrResult)

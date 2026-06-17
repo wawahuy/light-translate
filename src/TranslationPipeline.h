@@ -50,6 +50,9 @@ public:
     // Set scale percentage for capture region.
     void SetScaleRoi(int scaleRoi);
 
+    // Set ROI configuration.
+    void SetRoiConfig(bool active, int timeoutMs, RECT roiRect);
+
     // Pause or resume pipeline.
     void SetPaused(bool paused);
     bool IsPaused() const { return m_paused.load(); }
@@ -107,4 +110,11 @@ private:
     std::vector<std::vector<cv::Point2f>> m_lastBoxes;
     ULONGLONG            m_lastTranslateTime = 0;
     ULONGLONG            m_lastSeenTime = 0;
+
+    // ROI Idle Text Detection fields
+    bool                 m_roiActive = false;
+    int                  m_roiTimeoutMs = 3000;
+    RECT                 m_roiRect = { 0, 0, 0, 0 };
+    bool                 m_roiDetectionActive = false;
+    ULONGLONG            m_lastTextSeenTime = 0;
 };

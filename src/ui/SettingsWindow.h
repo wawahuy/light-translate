@@ -58,6 +58,8 @@ private:
     void OnDisplayModeChanged();
     void UpdateDisplayModeUI();
     void UpdateProviderUI();
+    void UpdateRoiUI();
+    void UpdateRoiLabel();
 
     // -- Command handlers ------------------------------------------------------
     void OnStart();
@@ -66,6 +68,7 @@ private:
     void OnTestApi();
     void OnToggleDrag();
     void OnProviderChanged();
+    void OnRoiActiveChanged();
     void OnSave();
     void OnTextColorPick();
     void OnShadowColorPick(bool shadow);
@@ -143,5 +146,5 @@ private:
 
     static constexpr wchar_t CLASS_NAME[] = L"GameTranslate_SettingsWnd";
     static constexpr int WND_W = 560;
-    static constexpr int WND_H = 740;
+    static constexpr int WND_H = 850;
 };

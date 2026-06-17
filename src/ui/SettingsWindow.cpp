@@ -141,6 +141,10 @@ LRESULT SettingsWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
                 m_config.captureSet = true;
                 UpdateRegionLabel();
             };
+        m_captureHelper.OnRoiRectChanged = [&](const RECT& rc)
+            {
+                UpdateRoiLabel();
+            };
 
         // Initialise Overlay window
         m_overlay.Create(m_hInstance);
@@ -195,6 +199,10 @@ LRESULT SettingsWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
         // Scheduler status callback
         m_scheduler.OnStatus = [&](const std::wstring& s)
             {
+                if (IsIconic(m_hwnd) || !IsWindowVisible(m_hwnd))
+                {
+                    return;
+                }
                 // Marshal to UI thread
                 wchar_t* buf = new wchar_t[s.size() + 1];
                 std::wmemcpy(buf, s.c_str(), s.size() + 1);
@@ -274,6 +282,7 @@ LRESULT SettingsWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
         case IDC_SELECT_REGION:    OnSelectRegion();                      break;
         case IDC_TEST_API_BTN:     OnTestApi();                           break;
         case IDC_SAVE_BTN:         OnSave();                              break;
+        case IDC_ROI_ACTIVE_CHECK: OnRoiActiveChanged();                  break;
         case IDC_TEXT_COLOR_BTN:   OnTextColorPick();                     break;
         case IDC_SHADOW_COLOR_BTN: OnColorPick(m_config.shadowColor);     break;
         case IDC_STROKE_COLOR_BTN: OnColorPick(m_config.strokeColor);     break;
@@ -435,7 +444,7 @@ void SettingsWindow::CreateControls()
     // -- Tab Control -----------------------------------------------------------
     m_tabCtrl = CreateWindowExW(0, WC_TABCONTROLW, L"",
         WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | TCS_TABS,
-        M, y, W, 430,
+        M, y, W, 560,
         m_hwnd,
         reinterpret_cast<HMENU>(static_cast<UINT_PTR>(IDC_TAB_CTRL)),
         m_hInstance, nullptr);
@@ -474,7 +483,7 @@ void SettingsWindow::CreateControls()
     // Show the first tab (Realtime) by default
     ShowTab(0);
 
-    y += 438;   // below tab control
+    y += 568;   // below tab control
 
     // -- Start / Stop (always visible) -----------------------------------------
     MakeButton(M, y, 120, 36, L"\u25B6  START", IDC_START_BTN);
@@ -591,6 +600,29 @@ void SettingsWindow::CreateRealtimeTab(int x, int y, int w)
         m_hotkeyModeControls.push_back(h);
     }
     cy += EH + 10;
+
+    // -- ROI Idle Text Detection group -----------------------------------------
+    h = MakeGroup(x, cy, w, 110, L"  ROI Idle Text Detection  ");
+    m_realtimeControls.push_back(h);
+    cy += 18;
+
+    h = MakeCheck(x + 8, cy, 250, LH, L"Enable ROI Idle Detection", IDC_ROI_ACTIVE_CHECK);
+    m_realtimeControls.push_back(h);
+    cy += LH + 6;
+
+    h = MakeLabel(x + 8, cy, 160, LH, L"Idle Timeout (ms):");
+    m_realtimeControls.push_back(h);
+
+    h = MakeEdit(x + 175, cy, 60, EH, IDC_ROI_TIMEOUT_EDIT);
+    m_realtimeControls.push_back(h);
+
+    h = MakeLabel(x + 250, cy, 130, LH, L"ROI Rect (X,Y,W,H):");
+    m_realtimeControls.push_back(h);
+
+    h = MakeLabel(x + 380, cy, w - 380 - 8, LH, L"0, 0, 0, 0", IDC_ROI_RECT_LABEL);
+    m_realtimeControls.push_back(h);
+
+    cy += EH + 24;
 
     // -- Overlay & Typography group --------------------------------------------
     h = MakeGroup(x, cy, w, 210, L"  Overlay & Typography  ");
@@ -776,6 +808,7 @@ void SettingsWindow::CreateSystemTab(int x, int y, int w)
     SendMessageW(h, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"PaddleOCR"));
     SendMessageW(h, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Windows OCR (Default)"));
     m_systemControls.push_back(h);
+
 }
 
 // -----------------------------------------------------------------------------
@@ -935,6 +968,26 @@ void SettingsWindow::UpdateProviderUI()
 
     InvalidateRect(m_hwnd, nullptr, TRUE);
 }
+void SettingsWindow::UpdateRoiUI()
+{
+    HWND hCheck = GetDlgItem(m_hwnd, IDC_ROI_ACTIVE_CHECK);
+    bool active = (SendMessageW(hCheck, BM_GETCHECK, 0, 0) == BST_CHECKED);
+    EnableWindow(GetDlgItem(m_hwnd, IDC_ROI_TIMEOUT_EDIT), active);
+    m_captureHelper.ShowRoi(active && m_captureHelper.IsVisible());
+}
+void SettingsWindow::UpdateRoiLabel()
+{
+    RECT rc = m_captureHelper.GetRoiRect();
+    wchar_t buf[128]{};
+    swprintf(buf, 128, L"%ld, %ld, %ld, %ld", rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top);
+    SetDlgItemTextW(m_hwnd, IDC_ROI_RECT_LABEL, buf);
+}
+void SettingsWindow::OnRoiActiveChanged()
+{
+    m_captureHelper.CenterRoi();
+    UpdateRoiUI();
+    UpdateRoiLabel();
+}
 
 // -----------------------------------------------------------------------------
 //  Config <-> UI
@@ -1003,6 +1056,14 @@ void SettingsWindow::ConfigToUI()
 
     UpdateRegionLabel();
     UpdateDisplayModeUI(); // apply hide/show of overlay-only controls based on display mode
+
+    CheckDlgButton(m_hwnd, IDC_ROI_ACTIVE_CHECK,
+        m_config.roiActive ? BST_CHECKED : BST_UNCHECKED);
+    SetDlgItemInt(m_hwnd, IDC_ROI_TIMEOUT_EDIT,
+        static_cast<UINT>(m_config.roiTimeoutMs), FALSE);
+    m_captureHelper.SetRoiRect(m_config.roiRect);
+    UpdateRoiUI();
+    UpdateRoiLabel();
 }
 
 void SettingsWindow::UIToConfig()
@@ -1078,6 +1139,11 @@ void SettingsWindow::UIToConfig()
         (IsDlgButtonChecked(m_hwnd, IDC_SHADOW_CHECK) == BST_CHECKED);
     m_config.strokeEnabled =
         (IsDlgButtonChecked(m_hwnd, IDC_STROKE_CHECK) == BST_CHECKED);
+
+    m_config.roiActive = (IsDlgButtonChecked(m_hwnd, IDC_ROI_ACTIVE_CHECK) == BST_CHECKED);
+    m_config.roiTimeoutMs = static_cast<int>(GetDlgItemInt(m_hwnd, IDC_ROI_TIMEOUT_EDIT, &ok, FALSE));
+    if (m_config.roiTimeoutMs <= 0) m_config.roiTimeoutMs = 3000;
+    m_config.roiRect = m_captureHelper.GetRoiRect();
 }
 
 void SettingsWindow::UpdateRegionLabel()
@@ -1619,6 +1685,7 @@ void SettingsWindow::OnStart()
     // Start based on capture mode
     m_scheduler.SetComponents(&m_capture, m_client.get(), &m_overlay);
     m_scheduler.SetDisplayMode(m_config.displayMode);
+    m_scheduler.SetRoiConfig(m_config.roiActive, m_config.roiTimeoutMs, m_config.roiRect);
     
     // Resolve OCR model paths and configure OCR type
     {
@@ -1856,6 +1923,7 @@ void SettingsWindow::SyncHelperWindows()
     if (showHelpers && !m_running)
     {
         m_captureHelper.Show(true);
+        UpdateRoiUI();
 
         if (m_config.displayMode == DisplayMode::InPlace)
         {

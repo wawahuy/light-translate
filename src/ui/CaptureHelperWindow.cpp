@@ -62,11 +62,17 @@ bool CaptureHelperWindow::Create(HINSTANCE hInstance)
     // Set transparency (opacity 140/255)
     SetLayeredWindowAttributes(m_hwnd, 0, 140, LWA_ALPHA);
 
+    if (!m_roiHelper.Create(m_hwnd, hInstance)) return false;
+    m_roiHelper.OnRectChanged = [&](const RECT& rc) {
+        if (OnRoiRectChanged) OnRoiRectChanged(rc);
+    };
+
     return true;
 }
 
 void CaptureHelperWindow::Destroy()
 {
+    m_roiHelper.Destroy();
     if (m_hwnd)
     {
         DestroyWindow(m_hwnd);
@@ -105,8 +111,31 @@ void CaptureHelperWindow::SetRect(const RECT& rc)
         SetWindowPos(m_hwnd, HWND_TOPMOST, rc.left, rc.top,
                      rc.right - rc.left, rc.bottom - rc.top,
                      SWP_NOACTIVATE | SWP_NOZORDER);
+        RECT clientRc{};
+        GetClientRect(m_hwnd, &clientRc);
+        m_roiHelper.OnParentResize(clientRc.right - clientRc.left, clientRc.bottom - clientRc.top);
         InvalidateRect(m_hwnd, nullptr, TRUE);
     }
+}
+
+void CaptureHelperWindow::ShowRoi(bool show)
+{
+    m_roiHelper.Show(show);
+}
+
+RECT CaptureHelperWindow::GetRoiRect() const
+{
+    return m_roiHelper.GetRect();
+}
+
+void CaptureHelperWindow::SetRoiRect(const RECT& rc)
+{
+    m_roiHelper.SetRect(rc);
+}
+
+void CaptureHelperWindow::CenterRoi()
+{
+    m_roiHelper.CenterAndReset();
 }
 
 LRESULT CALLBACK CaptureHelperWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
@@ -187,6 +216,12 @@ LRESULT CaptureHelperWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lPara
     case WM_MOVE:
     case WM_SIZE:
     {
+        if (msg == WM_SIZE)
+        {
+            int pW = LOWORD(lParam);
+            int pH = HIWORD(lParam);
+            m_roiHelper.OnParentResize(pW, pH);
+        }
         if (OnRectChanged)
         {
             RECT rc{};

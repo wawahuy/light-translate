@@ -71,6 +71,11 @@ struct AppConfig
     bool         strokeEnabled = true;
     float        strokeWidth   = 2.0f;
 
+    // ── ROI Idle Text Detection ──────────────────────────────────────────────
+    bool         roiActive     = true;
+    int          roiTimeoutMs  = 3000;
+    RECT         roiRect       = { 0, 0, 100, 100 };
+
     // ── Persistence ───────────────────────────────────────────────────────────
     void Save(const std::wstring& iniPath) const;
     bool Load(const std::wstring& iniPath);
