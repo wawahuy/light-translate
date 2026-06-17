@@ -200,10 +200,9 @@ void TranslationPipeline::SchedulerProc()
         if (!m_capture->GetLatestFrame(frame)) continue;
         if (frame.data.empty())               continue;
 
-        // Convert raw BGRA frame pixels to BGR format
+        // Wrap raw BGRA frame pixels in a cv::Mat and clone to own the buffer
         cv::Mat currentMat(frame.height, frame.width, CV_8UC4, frame.data.data());
-        cv::Mat bgrMat;
-        cv::cvtColor(currentMat, bgrMat, cv::COLOR_BGRA2BGR);
+        cv::Mat frameMat = currentMat.clone();
 
         // Crop/scale capture ROI if requested
         int scalePct = m_scaleRoi.load();
@@ -211,14 +210,14 @@ void TranslationPipeline::SchedulerProc()
         {
             double factor = scalePct / 100.0;
             cv::Mat scaledMat;
-            cv::resize(bgrMat, scaledMat, cv::Size(), factor, factor, cv::INTER_LINEAR);
-            bgrMat = std::move(scaledMat);
+            cv::resize(frameMat, scaledMat, cv::Size(), factor, factor, cv::INTER_LINEAR);
+            frameMat = std::move(scaledMat);
         }
 
         // Push frame to the single-slot queue
         {
             std::lock_guard<std::mutex> lk(m_queueMutex);
-            m_pending = PendingFrame{ std::move(bgrMat) };
+            m_pending = PendingFrame{ std::move(frameMat) };
         }
         m_queueCV.notify_one();
 
@@ -261,8 +260,10 @@ void TranslationPipeline::ProcessPendingFrame(cv::Mat frameMat)
         return;
     }
 
+    cv::Mat preparedFrame = m_ocrEngine->PrepareFrame(frameMat);
+
     OcrResult ocrResult;
-    bool hasText = PerformOcr(frameMat, ocrResult);
+    bool hasText = PerformOcr(preparedFrame, ocrResult);
 
     if (!hasText || ocrResult.empty())
     {

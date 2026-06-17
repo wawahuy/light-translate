@@ -54,6 +54,9 @@ public:
     // Check if the engine is initialized.
     virtual bool IsInitialized() const = 0;
 
+    // Convert/prepare a BGRA frame into the format expected by the engine.
+    virtual cv::Mat PrepareFrame(const cv::Mat& bgraFrame) = 0;
+
     // Single-phase OCR interface (run detection and recognition in one call).
     virtual OcrResult Recognize(const cv::Mat& bgrFrame) = 0;
 

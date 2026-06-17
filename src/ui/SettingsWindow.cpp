@@ -1941,10 +1941,6 @@ void SettingsWindow::PerformRegionCapture(const RECT& region)
 
     DeleteObject(hBmp);
 
-    // Convert BGRA to BGR
-    cv::Mat bgrMat;
-    cv::cvtColor(mat, bgrMat, cv::COLOR_BGRA2BGR);
-
     // Lazy-initialize Region OCR engine
     if (!m_regionOcr || !m_regionOcr->IsInitialized())
     {
@@ -1975,11 +1971,13 @@ void SettingsWindow::PerformRegionCapture(const RECT& region)
         UpdateStatus(L"Region OCR modules initialized successfully.");
     }
 
+    cv::Mat preparedFrame = m_regionOcr->PrepareFrame(mat);
+
     UpdateStatus(L"Performing OCR on selected region...");
     OcrResult ocrResult;
     if (m_regionOcr->SupportsTwoPhase())
     {
-        DetectionResult detection = m_regionOcr->Detect(bgrMat);
+        DetectionResult detection = m_regionOcr->Detect(preparedFrame);
         if (detection.empty())
         {
             UpdateStatus(L"No text detected in selected region.");
@@ -1991,7 +1989,7 @@ void SettingsWindow::PerformRegionCapture(const RECT& region)
     }
     else
     {
-        ocrResult = m_regionOcr->Recognize(bgrMat);
+        ocrResult = m_regionOcr->Recognize(preparedFrame);
     }
 
     std::wstring ocrText = Utf8ToWide(ocrResult.ConcatText());

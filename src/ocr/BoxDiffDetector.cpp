@@ -40,6 +40,10 @@ bool BoxDiffDetector::DetectChange(const cv::Mat& currentFrame, double threshold
         {
             gray = croppedTexts[i].clone();
         }
+        else if (croppedTexts[i].channels() == 4)
+        {
+            cv::cvtColor(croppedTexts[i], gray, cv::COLOR_BGRA2GRAY);
+        }
         else
         {
             cv::cvtColor(croppedTexts[i], gray, cv::COLOR_BGR2GRAY);
@@ -95,6 +99,10 @@ void BoxDiffDetector::Update(const cv::Mat& currentFrame,
             if (crop.channels() == 1)
             {
                 gray = crop.clone();
+            }
+            else if (crop.channels() == 4)
+            {
+                cv::cvtColor(crop, gray, cv::COLOR_BGRA2GRAY);
             }
             else
             {

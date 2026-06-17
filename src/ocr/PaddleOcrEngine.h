@@ -23,6 +23,7 @@ public:
     // IOcrEngine implementation
     bool Initialize() override;
     bool IsInitialized() const override { return m_initialized; }
+    cv::Mat PrepareFrame(const cv::Mat& bgraFrame) override;
     OcrResult Recognize(const cv::Mat& bgrFrame) override;
     
     bool SupportsTwoPhase() const override { return true; }

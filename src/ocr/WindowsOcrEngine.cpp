@@ -61,7 +61,12 @@ void WindowsOcrEngine::Reset()
     m_initialized = false;
 }
 
-::OcrResult WindowsOcrEngine::Recognize(const cv::Mat& bgrFrame)
+cv::Mat WindowsOcrEngine::PrepareFrame(const cv::Mat& bgraFrame)
+{
+    return bgraFrame; // Zero-copy, returns a reference of the matrix
+}
+
+::OcrResult WindowsOcrEngine::Recognize(const cv::Mat& bgraFrame)
 {
     ::OcrResult result;
     if (!m_initialized || !m_ocrEngine)
@@ -71,10 +76,6 @@ void WindowsOcrEngine::Reset()
 
     try
     {
-        // Convert BGR matrix to BGRA matrix (required by SoftwareBitmap)
-        cv::Mat bgraFrame;
-        cv::cvtColor(bgrFrame, bgraFrame, cv::COLOR_BGR2BGRA);
-
         // Construct a BGRA SoftwareBitmap
         SoftwareBitmap softwareBitmap(
             BitmapPixelFormat::Bgra8,

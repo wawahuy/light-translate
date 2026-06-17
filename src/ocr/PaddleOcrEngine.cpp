@@ -54,6 +54,13 @@ bool PaddleOcrEngine::Initialize()
     return true;
 }
 
+cv::Mat PaddleOcrEngine::PrepareFrame(const cv::Mat& bgraFrame)
+{
+    cv::Mat bgrFrame;
+    cv::cvtColor(bgraFrame, bgrFrame, cv::COLOR_BGRA2BGR);
+    return bgrFrame;
+}
+
 OcrResult PaddleOcrEngine::Recognize(const cv::Mat& bgrFrame)
 {
     DetectionResult det = Detect(bgrFrame);
