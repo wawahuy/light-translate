@@ -301,10 +301,31 @@ void OverlayWindow::Redraw()
                     float padX = std::max(w * 0.15f, 25.0f);
                     float padY = std::max(h * 0.15f, 12.0f);
 
-                    float newMinX = std::max(0.0f, minX - padX);
-                    float newMinY = std::max(0.0f, minY - padY);
-                    float newMaxX = std::min(static_cast<float>(m_width), maxX + padX);
-                    float newMaxY = std::min(static_cast<float>(m_height), maxY + padY);
+                    float boxMinX = minX - padX;
+                    float boxMinY = minY - padY;
+                    float boxW = w + padX * 2.0f;
+                    float boxH = h + padY * 2.0f;
+
+                    // Measure text on a single line (NoWrap) to find required width
+                    const int fontStyle = m_fontBold ? Gdiplus::FontStyleBold : Gdiplus::FontStyleRegular;
+                    Gdiplus::Font font(&family, static_cast<float>(m_fontSize), fontStyle, Gdiplus::UnitPixel);
+                    Gdiplus::StringFormat measureFmt;
+                    measureFmt.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap);
+                    Gdiplus::RectF measuredRect;
+                    g.MeasureString(m_text.c_str(), -1, &font, Gdiplus::PointF(0.0f, 0.0f), &measureFmt, &measuredRect);
+
+                    if (boxW < measuredRect.Width)
+                    {
+                        // Expand the width symmetrically around the center
+                        float centerX = boxMinX + boxW / 2.0f;
+                        boxMinX = centerX - measuredRect.Width / 2.0f;
+                        boxW = measuredRect.Width;
+                    }
+
+                    float newMinX = std::max(0.0f, boxMinX);
+                    float newMinY = std::max(0.0f, boxMinY);
+                    float newMaxX = std::min(static_cast<float>(m_width), newMinX + boxW);
+                    float newMaxY = std::min(static_cast<float>(m_height), newMinY + boxH);
 
                     layoutRect = Gdiplus::RectF(newMinX, newMinY, newMaxX - newMinX, newMaxY - newMinY);
                 }
@@ -317,6 +338,7 @@ void OverlayWindow::Redraw()
                 Gdiplus::SolidBrush blackBrush(Gdiplus::Color(255, 0, 0, 0));
                 g.FillRectangle(&blackBrush, layoutRect);
 
+                fmt.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap);
                 fmt.SetAlignment(Gdiplus::StringAlignmentCenter);
                 fmt.SetLineAlignment(Gdiplus::StringAlignmentCenter);
             }
