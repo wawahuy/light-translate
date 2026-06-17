@@ -26,6 +26,12 @@ public:
     void Update(const std::vector<std::vector<cv::Point2f>>& boxes,
                 const std::vector<cv::Mat>& regionGrays);
 
+    // Update the saved boxes by cropping the current frame and converting to grayscale internally.
+    // @param currentFrame The current BGR frame
+    // @param boxes        The new box coordinates (polygons)
+    void Update(const cv::Mat& currentFrame,
+                const std::vector<std::vector<cv::Point2f>>& boxes);
+
     // Clear saved state so the next DetectChange always reports true.
     void Reset();
 

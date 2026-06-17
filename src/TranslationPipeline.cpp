@@ -338,41 +338,49 @@ bool TranslationPipeline::PerformOcr(const cv::Mat& frameMat, OcrResult& outOcrR
 {
     try
     {
+        // 1. Check if box regions are unchanged (works for all engines)
+        if (m_boxDiffDetector.HasSavedBoxes())
+        {
+            if (!m_boxDiffDetector.DetectChange(frameMat, 1.0))
+            {
+                m_lastSeenTime = GetTickCount64();
+                if (OnStatus) OnStatus(L"Skipped (Box regions unchanged)");
+                
+                // Populate outOcrResult with cached boxes and text to prevent clearing screen
+                outOcrResult.boxes = m_lastBoxes;
+                outOcrResult.texts = { WideToUtf8(m_lastOCRText) };
+                return true; 
+            }
+        }
+
+        // 2. Perform recognition based on engine support
         if (m_ocrEngine->SupportsTwoPhase())
         {
-            // Execute PaddleOCR optimized two-phase execution
-            bool shouldDetect = true;
-            if (m_boxDiffDetector.HasSavedBoxes())
+            DetectionResult detection = m_ocrEngine->Detect(frameMat);
+            if (detection.empty())
             {
-                if (!m_boxDiffDetector.DetectChange(frameMat, 1.0))
-                {
-                    shouldDetect = false;
-                    m_lastSeenTime = GetTickCount64();
-                    if (OnStatus) OnStatus(L"Skipped (Box regions unchanged)");
-                    
-                    // Recover last OCR text directly to skip full detection
-                    return false; 
-                }
+                m_lastBoxes.clear();
+                m_boxDiffDetector.Reset();
+                return false;
             }
 
-            if (shouldDetect)
-            {
-                DetectionResult detection = m_ocrEngine->Detect(frameMat);
-                if (detection.empty())
-                {
-                    m_lastBoxes.clear();
-                    return false;
-                }
-
-                m_boxDiffDetector.Update(detection.boxes, detection.regionGrays);
-                m_lastBoxes = detection.boxes;
-                outOcrResult = m_ocrEngine->Recognize(detection);
-            }
+            m_boxDiffDetector.Update(detection.boxes, detection.regionGrays);
+            m_lastBoxes = detection.boxes;
+            outOcrResult = m_ocrEngine->Recognize(detection);
         }
         else
         {
             // Execute standard single-phase execution (e.g. Windows OCR)
             outOcrResult = m_ocrEngine->Recognize(frameMat);
+            if (outOcrResult.empty())
+            {
+                m_lastBoxes.clear();
+                m_boxDiffDetector.Reset();
+                return false;
+            }
+
+            // Update BoxDiffDetector for single-phase engines by cropping the frame
+            m_boxDiffDetector.Update(frameMat, outOcrResult.boxes);
             m_lastBoxes = outOcrResult.boxes;
         }
     }

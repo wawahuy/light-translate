@@ -78,6 +78,33 @@ void BoxDiffDetector::Update(const std::vector<std::vector<cv::Point2f>>& boxes,
     m_lastGrays = regionGrays;
 }
 
+void BoxDiffDetector::Update(const cv::Mat& currentFrame,
+                             const std::vector<std::vector<cv::Point2f>>& boxes)
+{
+    m_lastBoxes = boxes;
+    m_lastGrays.clear();
+
+    auto cropResult = (*m_cropByPolys)(currentFrame, boxes);
+    if (cropResult.ok())
+    {
+        const auto& croppedTexts = cropResult.value();
+        m_lastGrays.reserve(croppedTexts.size());
+        for (const auto& crop : croppedTexts)
+        {
+            cv::Mat gray;
+            if (crop.channels() == 1)
+            {
+                gray = crop.clone();
+            }
+            else
+            {
+                cv::cvtColor(crop, gray, cv::COLOR_BGR2GRAY);
+            }
+            m_lastGrays.push_back(std::move(gray));
+        }
+    }
+}
+
 void BoxDiffDetector::Reset()
 {
     m_lastBoxes.clear();
