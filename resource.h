@@ -45,6 +45,9 @@
 #define IDC_STATIC_API_MODEL   1043  ///< Static label for API Model
 #define IDC_STATIC_API_KEY     1044  ///< Static label for API Key
 #define IDC_DISPLAY_MODE_COMBO 1045  ///< Display Mode selection combo box
+#define IDC_ROI_ACTIVE_CHECK   1046  ///< Checkbox to enable ROI Idle Detection
+#define IDC_ROI_TIMEOUT_EDIT   1047  ///< EditBox for idle activation timeout in ms
+#define IDC_ROI_RECT_LABEL     1048  ///< Static/edit box showing ROI X,Y,W,H text
 
 
 
