@@ -306,13 +306,20 @@ void OverlayWindow::Redraw()
                     float boxW = w + padX * 2.0f;
                     float boxH = h + padY * 2.0f;
 
-                    // Measure text on a single line (NoWrap) to find required width
+                    // Measure text allowing wrap to find required width and height
                     const int fontStyle = m_fontBold ? Gdiplus::FontStyleBold : Gdiplus::FontStyleRegular;
                     Gdiplus::Font font(&family, static_cast<float>(m_fontSize), fontStyle, Gdiplus::UnitPixel);
-                    Gdiplus::StringFormat measureFmt;
-                    measureFmt.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap);
+                    
+                    float maxWidth = std::max(static_cast<float>(m_width) - 10.0f, 30.0f);
+                    float targetW = w + padX * 2.0f;
+                    if (targetW > maxWidth) targetW = maxWidth;
+                    if (targetW < 100.0f) targetW = 100.0f;
+                    if (targetW > maxWidth) targetW = maxWidth;
+
+                    Gdiplus::RectF layoutRectConstraint(0.0f, 0.0f, targetW, 10000.0f);
                     Gdiplus::RectF measuredRect;
-                    g.MeasureString(m_text.c_str(), -1, &font, Gdiplus::PointF(0.0f, 0.0f), &measureFmt, &measuredRect);
+                    Gdiplus::StringFormat measureFmt;
+                    g.MeasureString(m_text.c_str(), -1, &font, layoutRectConstraint, &measureFmt, &measuredRect);
 
                     float reqW = measuredRect.Width + m_strokeWidth * 2.0f + 20.0f;
                     float reqH = measuredRect.Height + m_strokeWidth * 2.0f + 12.0f;
@@ -349,7 +356,7 @@ void OverlayWindow::Redraw()
                 Gdiplus::SolidBrush blackBrush(Gdiplus::Color(255, 0, 0, 0));
                 g.FillRectangle(&blackBrush, layoutRect);
 
-                fmt.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap | Gdiplus::StringFormatFlagsNoClip);
+                fmt.SetFormatFlags(Gdiplus::StringFormatFlagsNoClip);
                 fmt.SetAlignment(Gdiplus::StringAlignmentCenter);
                 fmt.SetLineAlignment(Gdiplus::StringAlignmentCenter);
             }
