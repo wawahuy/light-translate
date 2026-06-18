@@ -152,5 +152,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: light-translate-windows-x64.zip
+          make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
