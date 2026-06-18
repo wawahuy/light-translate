@@ -152,8 +152,8 @@ bool AppConfig::Load(const std::wstring& iniPath)
     roiTimeoutMs = ReadInt(L"ROI", L"TimeoutMs", 3000, f);
     roiRect.left = ReadInt(L"ROI", L"Left",      0,    f);
     roiRect.top  = ReadInt(L"ROI", L"Top",       0,    f);
-    roiRect.right= ReadInt(L"ROI", L"Right",     100,  f);
-    roiRect.bottom=ReadInt(L"ROI", L"Bottom",    100,  f);
+    roiRect.right= ReadInt(L"ROI", L"Right",     0,    f);
+    roiRect.bottom=ReadInt(L"ROI", L"Bottom",    0,    f);
 
     return true;
 }

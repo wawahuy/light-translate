@@ -74,7 +74,7 @@ struct AppConfig
     // ── ROI Idle Text Detection ──────────────────────────────────────────────
     bool         roiActive     = true;
     int          roiTimeoutMs  = 3000;
-    RECT         roiRect       = { 0, 0, 100, 100 };
+    RECT         roiRect       = { 0, 0, 0, 0 };
 
     // ── Persistence ───────────────────────────────────────────────────────────
     void Save(const std::wstring& iniPath) const;

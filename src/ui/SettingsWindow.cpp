@@ -1061,7 +1061,15 @@ void SettingsWindow::ConfigToUI()
         m_config.roiActive ? BST_CHECKED : BST_UNCHECKED);
     SetDlgItemInt(m_hwnd, IDC_ROI_TIMEOUT_EDIT,
         static_cast<UINT>(m_config.roiTimeoutMs), FALSE);
-    m_captureHelper.SetRoiRect(m_config.roiRect);
+    if ((m_config.roiRect.right - m_config.roiRect.left <= 0) || (m_config.roiRect.bottom - m_config.roiRect.top <= 0))
+    {
+        m_captureHelper.CenterRoi();
+        m_config.roiRect = m_captureHelper.GetRoiRect();
+    }
+    else
+    {
+        m_captureHelper.SetRoiRect(m_config.roiRect);
+    }
     UpdateRoiUI();
     UpdateRoiLabel();
 }
