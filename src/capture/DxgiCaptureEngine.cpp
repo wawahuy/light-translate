@@ -50,7 +50,8 @@ bool DxgiCaptureEngine::GetLatestFrame(Frame& outFrame)
 {
     std::lock_guard<std::mutex> lock(m_frameMutex);
     if (!m_hasFrame) return false;
-    outFrame = m_latestFrame;           // copy
+    outFrame = std::move(m_latestFrame); // zero-copy move
+    m_hasFrame = false;                  // reset state until next capture
     return true;
 }
 

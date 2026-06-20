@@ -190,24 +190,24 @@ void TranslationPipeline::SchedulerProc()
         if (!m_capture->GetLatestFrame(frame)) continue;
         if (frame.data.empty())               continue;
 
-        // Wrap raw BGRA frame pixels in a cv::Mat and clone to own the buffer
-        cv::Mat currentMat(frame.height, frame.width, CV_8UC4, frame.data.data());
-        cv::Mat frameMat = currentMat.clone();
-
-        // Crop/scale capture ROI if requested
-        int scalePct = m_scaleRoi.load();
-        if (scalePct > 0 && scalePct != 100)
-        {
-            double factor = scalePct / 100.0;
-            cv::Mat scaledMat;
-            cv::resize(frameMat, scaledMat, cv::Size(), factor, factor, cv::INTER_LINEAR);
-            frameMat = std::move(scaledMat);
-        }
-
-        // Push frame to the single-slot queue
+        // Push frame to the single-slot queue (Zero-copy implementation)
         {
             std::lock_guard<std::mutex> lk(m_queueMutex);
-            m_pending = PendingFrame{ std::move(frameMat) };
+            PendingFrame pending;
+            pending.frame = std::move(frame);
+
+            int scalePct = m_scaleRoi.load();
+            if (scalePct > 0 && scalePct != 100)
+            {
+                cv::Mat currentMat(pending.frame.height, pending.frame.width, CV_8UC4, pending.frame.data.data());
+                double factor = scalePct / 100.0;
+                cv::resize(currentMat, pending.frameMat, cv::Size(), factor, factor, cv::INTER_LINEAR);
+            }
+            else
+            {
+                pending.frameMat = cv::Mat(pending.frame.height, pending.frame.width, CV_8UC4, pending.frame.data.data());
+            }
+            m_pending = std::move(pending);
         }
         m_queueCV.notify_one();
 

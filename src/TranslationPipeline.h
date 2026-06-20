@@ -14,8 +14,9 @@
 #include "src/network/ITranslateProvider.h"
 #include "src/AppConfig.h"
 
+#include "src/capture/ICaptureEngine.h"
+
 // Forward declarations
-class ICaptureEngine;
 class ITranslationOutput;
 
 // Coordinates the capture -> OCR -> translate -> overlay pipeline.
@@ -91,7 +92,10 @@ private:
     DisplayMode          m_displayMode = DisplayMode::InPlace;
 
     // Single-slot frame queue
-    struct PendingFrame { cv::Mat frameMat; };
+    struct PendingFrame {
+        Frame frame;
+        cv::Mat frameMat;
+    };
     std::optional<PendingFrame> m_pending;
     std::mutex                  m_queueMutex;
     std::condition_variable     m_queueCV;
