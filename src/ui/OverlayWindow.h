@@ -5,9 +5,7 @@
 #include <functional>
 #include <mutex>
 #include <vector>
-
-// Simple coordinate struct for OCR box vertices
-struct Point2F { float x; float y; };
+#include "src/ui/ITranslationOutput.h"
 
 /// Always-on-top, click-through, transparent overlay window.
 ///
@@ -20,36 +18,36 @@ struct Point2F { float x; float y; };
 /// Thread-safety:
 ///   SetText() may be called from any thread; it posts WM_OVERLAY_SETTEXT to
 ///   the HWND so the actual drawing stays on the UI thread.
-class OverlayWindow
+class OverlayWindow : public ITranslationOutput
 {
 public:
     OverlayWindow();
-    ~OverlayWindow();
+    ~OverlayWindow() override;
 
     bool Create(HINSTANCE hInstance);
     void Destroy();
 
     // Set the displayed text.  Safe to call from any thread.
-    void SetText(const std::wstring& text);
+    void SetText(const std::wstring& text) override;
 
     // Set text and detected text regions for in-place rendering. Safe from any thread.
-    void SetInPlaceText(const std::wstring& text, const std::vector<std::vector<Point2F>>& boxes);
+    void SetInPlaceText(const std::wstring& text, const std::vector<std::vector<Point2F>>& boxes) override;
 
     const std::wstring& GetText() const { return m_text; }
 
     /// Move the overlay to (x, y) in screen coordinates.
-    void SetPosition(int x, int y);
+    void SetPosition(int x, int y) override;
     void GetPosition(int& x, int& y) const { x = m_posX; y = m_posY; }
-    void SetSize(int w, int h);
+    void SetSize(int w, int h) override;
     void GetSize(int& w, int& h) const;
 
     /// Constrain dragging to this screen rectangle (default = virtual screen).
     void SetBoundRect(const RECT& rc) noexcept { m_boundRect = rc; }
     RECT GetBoundRect()               const noexcept { return m_boundRect; }
 
-    void Show();
-    void Hide();
-    bool IsVisible() const;
+    void Show() override;
+    void Hide() override;
+    bool IsVisible() const override;
 
     /// Toggle drag mode: removes WS_EX_TRANSPARENT so the user can drag.
     void EnableDrag(bool enable);

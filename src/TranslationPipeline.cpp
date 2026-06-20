@@ -1,8 +1,8 @@
 #include "src/TranslationPipeline.h"
-#include "src/capture/CaptureEngine.h"
+#include "src/capture/ICaptureEngine.h"
 #include "src/network/ITranslateProvider.h"
 #include "src/utils/StringUtils.h"
-#include "src/ui/OverlayWindow.h"
+#include "src/ui/ITranslationOutput.h"
 #include "src/ocr/OcrFactory.h"
 #include <opencv2/imgproc.hpp>
 
@@ -20,9 +20,11 @@ TranslationPipeline::~TranslationPipeline()
     Stop();
 }
 
-void TranslationPipeline::SetComponents(CaptureEngine* capture,
+#include <chrono>
+
+void TranslationPipeline::SetComponents(ICaptureEngine* capture,
                                          ITranslateProvider* client,
-                                         OverlayWindow* overlay)
+                                         ITranslationOutput* overlay)
 {
     m_capture = capture;
     m_client  = client;
@@ -57,35 +59,15 @@ bool TranslationPipeline::Start(int intervalMs)
     m_intervalMs.store(intervalMs);
     m_shouldStop.store(false);
     m_paused.store(false);
+    m_schedulerTriggered = false;
     m_boxDiffDetector.Reset();
-
-    // Event used to signal thread stop
-    m_hStopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-
-    // Event used to trigger manual capture cycles
-    m_hTriggerEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
 
     if (intervalMs > 0)
     {
-        // Continuous auto mode
-        m_hTimer = CreateWaitableTimerExW(
-            nullptr, nullptr,
-            CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
-            TIMER_ALL_ACCESS);
-        if (!m_hTimer)
-            m_hTimer = CreateWaitableTimerW(nullptr, FALSE, nullptr);
-
-        if (!m_hTimer || !m_hStopEvent) return false;
-
-        LARGE_INTEGER li{};
-        li.QuadPart = -static_cast<LONGLONG>(intervalMs) * 10000LL;
-        SetWaitableTimer(m_hTimer, &li, intervalMs, nullptr, nullptr, FALSE);
         if (OnStatus) OnStatus(L"Pipeline starting with interval " + std::to_wstring(intervalMs) + L" ms...");
     }
     else
     {
-        // Hotkey / manual trigger mode
-        m_hTimer = nullptr;
         if (OnStatus) OnStatus(L"Pipeline starting in manual trigger mode...");
     }
 
@@ -111,8 +93,11 @@ void TranslationPipeline::Stop()
     m_shouldStop.store(true);
 
     // Wake up capture worker thread
-    if (m_hStopEvent)    SetEvent(m_hStopEvent);
-    if (m_hTriggerEvent) SetEvent(m_hTriggerEvent);
+    {
+        std::lock_guard<std::mutex> lk(m_schedulerMutex);
+        m_schedulerTriggered = true;
+    }
+    m_schedulerCV.notify_all();
 
     // Wake up network queue consumer thread
     {
@@ -123,10 +108,6 @@ void TranslationPipeline::Stop()
 
     if (m_schedulerThread.joinable()) m_schedulerThread.join();
     if (m_networkThread.joinable())   m_networkThread.join();
-
-    if (m_hTimer)        { CloseHandle(m_hTimer);        m_hTimer        = nullptr; }
-    if (m_hStopEvent)    { CloseHandle(m_hStopEvent);    m_hStopEvent    = nullptr; }
-    if (m_hTriggerEvent) { CloseHandle(m_hTriggerEvent); m_hTriggerEvent = nullptr; }
 
     m_running.store(false);
     
@@ -143,12 +124,10 @@ void TranslationPipeline::Stop()
 void TranslationPipeline::SetIntervalMs(int ms)
 {
     m_intervalMs.store(ms);
-    if (m_running.load() && m_hTimer)
     {
-        LARGE_INTEGER li{};
-        li.QuadPart = -static_cast<LONGLONG>(ms) * 10000LL;
-        SetWaitableTimer(m_hTimer, &li, ms, nullptr, nullptr, FALSE);
+        std::lock_guard<std::mutex> lk(m_schedulerMutex);
     }
+    m_schedulerCV.notify_all();
 }
 
 void TranslationPipeline::SetScaleRoi(int scaleRoi)
@@ -158,8 +137,11 @@ void TranslationPipeline::SetScaleRoi(int scaleRoi)
 
 void TranslationPipeline::TriggerOnce()
 {
-    if (m_hTriggerEvent)
-        SetEvent(m_hTriggerEvent);
+    {
+        std::lock_guard<std::mutex> lk(m_schedulerMutex);
+        m_schedulerTriggered = true;
+    }
+    m_schedulerCV.notify_all();
 }
 
 void TranslationPipeline::SetPaused(bool paused)
@@ -172,31 +154,28 @@ void TranslationPipeline::SchedulerProc()
 {
     if (OnStatus) OnStatus(L"Capture scheduler started.");
 
-    HANDLE handles[3];
-    DWORD  handleCount;
-
-    if (m_hTimer)
-    {
-        handles[0] = m_hTimer;
-        handles[1] = m_hTriggerEvent;
-        handles[2] = m_hStopEvent;
-        handleCount = 3;
-    }
-    else
-    {
-        handles[0] = m_hTriggerEvent;
-        handles[1] = m_hStopEvent;
-        handleCount = 2;
-    }
-
     while (!m_shouldStop.load())
     {
-        DWORD res = WaitForMultipleObjects(handleCount, handles, FALSE, INFINITE);
-        DWORD idx = res - WAIT_OBJECT_0;
-        if (idx >= handleCount) break;
+        {
+            std::unique_lock<std::mutex> lk(m_schedulerMutex);
+            int interval = m_intervalMs.load();
+            if (interval > 0)
+            {
+                m_schedulerCV.wait_for(lk, std::chrono::milliseconds(interval), [&] {
+                    return m_shouldStop.load() || m_schedulerTriggered;
+                });
+            }
+            else
+            {
+                m_schedulerCV.wait(lk, [&] {
+                    return m_shouldStop.load() || m_schedulerTriggered;
+                });
+            }
 
-        if (handles[idx] == m_hStopEvent) break;
-        if (m_shouldStop.load()) break;
+            if (m_shouldStop.load()) break;
+            m_schedulerTriggered = false;
+        }
+
         if (m_paused.load()) continue;
 
         // Drop the capture tick if network thread is currently busy

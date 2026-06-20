@@ -28,7 +28,7 @@ constexpr wchar_t SettingsWindow::CLASS_NAME[];
 //  Constructor / Destructor
 // -----------------------------------------------------------------------------
 
-SettingsWindow::SettingsWindow() = default;
+SettingsWindow::SettingsWindow() : m_controller(std::make_unique<AppController>()) {}
 SettingsWindow::~SettingsWindow()
 {
     UnregisterCaptureHotkey();
@@ -197,7 +197,7 @@ LRESULT SettingsWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
         SyncHelperWindows();
 
         // Scheduler status callback
-        m_scheduler.OnStatus = [&](const std::wstring& s)
+        m_controller->OnStatus = [&](const std::wstring& s)
             {
                 if (IsIconic(m_hwnd) || !IsWindowVisible(m_hwnd))
                 {
@@ -921,7 +921,7 @@ void SettingsWindow::OnDisplayModeChanged()
 
     if (m_running)
     {
-        m_scheduler.SetDisplayMode(m_config.displayMode);
+        m_controller->GetPipeline().SetDisplayMode(m_config.displayMode);
         if (m_config.displayMode == DisplayMode::InPlace)
         {
             m_overlay.SetPosition(m_config.captureRect.left, m_config.captureRect.top);
@@ -1603,12 +1603,12 @@ void SettingsWindow::OnHotkey(int id)
     if (id == HOTKEY_CAPTURE_ID)
     {
         UpdateStatus(L"Hotkey pressed — capturing frame...");
-        m_scheduler.TriggerOnce();
+        m_controller->TriggerOnce();
     }
     else if (id == HOTKEY_PAUSE_ID)
     {
-        bool currentlyPaused = m_scheduler.IsPaused();
-        m_scheduler.SetPaused(!currentlyPaused);
+        bool currentlyPaused = m_controller->IsPaused();
+        m_controller->SetPaused(!currentlyPaused);
         if (!currentlyPaused)
         {
             UpdateStatus(L"Capture paused.");
@@ -1640,30 +1640,20 @@ void SettingsWindow::OnStart()
         return;
     }
 
-    // (Re-)initialise capture engine
-    m_capture.Shutdown();
-    if (!m_capture.Initialize(m_config.monitorIndex))
+    // Sync settings to controller
+    m_controller->GetConfig() = m_config;
+    
+    if (!m_controller->Start(m_hwnd, &m_overlay))
     {
         MessageBoxW(m_hwnd,
-            (L"CaptureEngine init failed:\n" + m_capture.GetLastError()).c_str(),
+            (L"Start failed:\n" + m_controller->GetLastError()).c_str(),
             L"Error", MB_ICONERROR);
         return;
     }
-    m_capture.SetCaptureRect(m_config.captureRect);
-    m_capture.Start();
 
     // Hide capture helper, set overlay to translation mode
     m_captureHelper.Show(false);
     m_overlay.EnableDrag(false);
-
-    // Configure translate client
-    m_client = TranslateProviderFactory::CreateProvider(m_config.providerType);
-    if (m_client)
-    {
-        m_client->SetApiKey(m_config.apiKey);
-        m_client->SetApiModel(m_config.apiModel);
-        m_client->SetTargetLanguage(m_config.targetLanguage);
-    }
 
     // Apply appearance to overlay
     m_overlay.SetFontName(m_config.fontName);
@@ -1690,42 +1680,14 @@ void SettingsWindow::OnStart()
     }
     m_overlay.Show();
 
-    // Start based on capture mode
-    m_scheduler.SetComponents(&m_capture, m_client.get(), &m_overlay);
-    m_scheduler.SetDisplayMode(m_config.displayMode);
-    m_scheduler.SetRoiConfig(m_config.roiActive, m_config.roiTimeoutMs, m_config.roiRect);
-    
-    // Resolve OCR model paths and configure OCR type
-    {
-        wchar_t cwd[MAX_PATH] = { 0 };
-        GetCurrentDirectoryW(MAX_PATH, cwd);
-        std::wstring baseDir = cwd;
-        for (auto& c : baseDir)
-        {
-            if (c == L'\\') c = L'/';
-        }
-        if (!baseDir.empty() && baseDir.back() != L'/')
-        {
-            baseDir += L'/';
-        }
-        std::wstring detModelDir = baseDir + L"models/PP-OCRv5_mobile_det_infer";
-        std::wstring recModelDir = baseDir + L"models/PP-OCRv5_mobile_rec_infer";
-        m_scheduler.SetOcrConfig(m_config.ocrType, detModelDir, recModelDir);
-    }
-
-    m_scheduler.SetScaleRoi(m_config.scaleRoi);
-
     if (m_config.captureMode == CaptureMode::Auto)
     {
-        m_scheduler.Start(m_config.GetIntervalMs());
         RegisterPauseHotkey();
         UpdateStatus(L"Started (Auto mode, interval: " +
             std::to_wstring(m_config.captureIntervalMs) + L"ms).");
     }
     else
     {
-        // Hotkey mode: start scheduler in paused/manual mode
-        m_scheduler.Start(0);  // 0 = no auto timer
         RegisterCaptureHotkey();
         UpdateStatus(L"Started (Hotkey mode: " + HotkeyToString(m_config.hotkeyVk, m_config.hotkeyMod) + L").");
     }
@@ -1744,8 +1706,7 @@ void SettingsWindow::OnStop()
 
     UnregisterCaptureHotkey();
     UnregisterPauseHotkey();
-    m_scheduler.Stop();
-    m_capture.Stop();
+    m_controller->Stop();
 
     m_running = false;
     EnableWindow(GetDlgItem(m_hwnd, IDC_START_BTN), TRUE);
@@ -1834,7 +1795,7 @@ void SettingsWindow::OnSave()
     UpdateStatus(L"Settings saved.");
     
     // Reset region OCR to allow reloading with a new type next time
-    m_regionOcr.reset();
+    m_controller->ResetRegionOcr();
 }
 
 void SettingsWindow::OnColorPick(COLORREF& colorRef)
@@ -2017,89 +1978,16 @@ void SettingsWindow::PerformRegionCapture(const RECT& region)
 
     DeleteObject(hBmp);
 
-    // Lazy-initialize Region OCR engine
-    if (!m_regionOcr || !m_regionOcr->IsInitialized())
-    {
-        wchar_t cwd[MAX_PATH] = { 0 };
-        GetCurrentDirectoryW(MAX_PATH, cwd);
-        std::wstring baseDir = cwd;
-        for (auto& c : baseDir)
-        {
-            if (c == L'\\') c = L'/';
-        }
-        if (!baseDir.empty() && baseDir.back() != L'/')
-        {
-            baseDir += L'/';
-        }
-        std::wstring detModelDir = baseDir + L"models/PP-OCRv5_mobile_det_infer";
-        std::wstring recModelDir = baseDir + L"models/PP-OCRv5_mobile_rec_infer";
+    m_controller->GetConfig() = m_config; // Sync configuration
+    std::wstring ocrText;
+    std::wstring result = m_controller->PerformRegionCaptureAndTranslate(mat, ocrText);
 
-        UpdateStatus(L"Initializing OCR modules for region selection...");
-        m_regionOcr = OcrFactory::CreateEngine(m_config.ocrType, detModelDir, recModelDir);
-        if (!m_regionOcr || !m_regionOcr->Initialize())
-        {
-            UpdateStatus(L"Region OCR Error: Failed to initialize models.");
-            m_regionOcr.reset();
-            auto* data = new RegionResultData{ region, L"" };
-            PostMessageW(m_hwnd, WM_SHOW_REGION_RESULT, 0, reinterpret_cast<LPARAM>(data));
-            return;
-        }
-        UpdateStatus(L"Region OCR modules initialized successfully.");
-    }
-
-    cv::Mat preparedFrame = m_regionOcr->PrepareFrame(mat);
-
-    UpdateStatus(L"Performing OCR on selected region...");
-    OcrResult ocrResult;
-    if (m_regionOcr->SupportsTwoPhase())
-    {
-        DetectionResult detection = m_regionOcr->Detect(preparedFrame);
-        if (detection.empty())
-        {
-            UpdateStatus(L"No text detected in selected region.");
-            auto* data = new RegionResultData{ region, L"" };
-            PostMessageW(m_hwnd, WM_SHOW_REGION_RESULT, 0, reinterpret_cast<LPARAM>(data));
-            return;
-        }
-        ocrResult = m_regionOcr->Recognize(detection);
-    }
-    else
-    {
-        ocrResult = m_regionOcr->Recognize(preparedFrame);
-    }
-
-    std::wstring ocrText = Utf8ToWide(ocrResult.ConcatText());
-    if (ocrText.empty())
-    {
-        UpdateStatus(L"No text recognized in selected region.");
-        auto* data = new RegionResultData{ region, L"" };
-        PostMessageW(m_hwnd, WM_SHOW_REGION_RESULT, 0, reinterpret_cast<LPARAM>(data));
-        return;
-    }
-
-    UpdateStatus(L"Translating: " + ocrText);
-    auto client = TranslateProviderFactory::CreateProvider(m_config.providerType);
-    if (!client)
-    {
-        UpdateStatus(L"Translation API error: Invalid provider.");
-        auto* data = new RegionResultData{ region, L"" };
-        PostMessageW(m_hwnd, WM_SHOW_REGION_RESULT, 0, reinterpret_cast<LPARAM>(data));
-        return;
-    }
-    client->SetApiKey(m_config.apiKey);
-    client->SetApiModel(m_config.apiModel);
-    client->SetTargetLanguage(m_config.targetLanguage);
-
-    std::wstring result = client->Translate(ocrText);
     if (result.empty())
     {
-        UpdateStatus(L"Translation API error: " + client->GetLastError());
         auto* data = new RegionResultData{ region, L"" };
         PostMessageW(m_hwnd, WM_SHOW_REGION_RESULT, 0, reinterpret_cast<LPARAM>(data));
         return;
     }
-
-    UpdateStatus(L"OK: " + result);
 
     // Marshal window display to UI thread
     auto* data = new RegionResultData{ region, result };

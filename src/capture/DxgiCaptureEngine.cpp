@@ -1,12 +1,12 @@
-#include "src/capture/CaptureEngine.h"
+#include "src/capture/DxgiCaptureEngine.h"
 #include <algorithm>
 #include <cstring>
 
 // ── Constructor / Destructor ──────────────────────────────────────────────────
 
-CaptureEngine::CaptureEngine() = default;
+DxgiCaptureEngine::DxgiCaptureEngine() = default;
 
-CaptureEngine::~CaptureEngine()
+DxgiCaptureEngine::~DxgiCaptureEngine()
 {
     Stop();
     Shutdown();
@@ -14,30 +14,30 @@ CaptureEngine::~CaptureEngine()
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-bool CaptureEngine::Initialize(int monitorIndex)
+bool DxgiCaptureEngine::Initialize(int monitorIndex)
 {
     m_monitorIndex = monitorIndex;
     return InitDXGI(monitorIndex);
 }
 
-void CaptureEngine::Shutdown()
+void DxgiCaptureEngine::Shutdown()
 {
     Stop();
     ReleaseResources();
 }
 
-bool CaptureEngine::Start()
+bool DxgiCaptureEngine::Start()
 {
     if (m_running.load()) return true;
     if (!m_device)        return false;   // Must call Initialize first
 
     m_shouldStop.store(false);
     m_running.store(true);
-    m_thread = std::thread(&CaptureEngine::CaptureLoop, this);
+    m_thread = std::thread(&DxgiCaptureEngine::CaptureLoop, this);
     return true;
 }
 
-void CaptureEngine::Stop()
+void DxgiCaptureEngine::Stop()
 {
     if (!m_running.load()) return;
     m_shouldStop.store(true);
@@ -46,7 +46,7 @@ void CaptureEngine::Stop()
     m_running.store(false);
 }
 
-bool CaptureEngine::GetLatestFrame(Frame& outFrame)
+bool DxgiCaptureEngine::GetLatestFrame(Frame& outFrame)
 {
     std::lock_guard<std::mutex> lock(m_frameMutex);
     if (!m_hasFrame) return false;
@@ -56,7 +56,7 @@ bool CaptureEngine::GetLatestFrame(Frame& outFrame)
 
 // ── DXGI Initialisation ───────────────────────────────────────────────────────
 
-bool CaptureEngine::InitDXGI(int monitorIndex)
+bool DxgiCaptureEngine::InitDXGI(int monitorIndex)
 {
     // 1. Create D3D11 device (hardware adapter)
     D3D_FEATURE_LEVEL featureLevel{};
@@ -112,7 +112,7 @@ bool CaptureEngine::InitDXGI(int monitorIndex)
     return true;
 }
 
-void CaptureEngine::ReleaseResources()
+void DxgiCaptureEngine::ReleaseResources()
 {
     if (m_stagingTex)  { m_stagingTex->Release();  m_stagingTex  = nullptr; m_stagingW = m_stagingH = 0; }
     if (m_duplication) { m_duplication->Release(); m_duplication = nullptr; }
@@ -120,7 +120,7 @@ void CaptureEngine::ReleaseResources()
     if (m_device)      { m_device->Release();      m_device      = nullptr; }
 }
 
-bool CaptureEngine::RecreateResources()
+bool DxgiCaptureEngine::RecreateResources()
 {
     ReleaseResources();
     return InitDXGI(m_monitorIndex);
@@ -128,7 +128,7 @@ bool CaptureEngine::RecreateResources()
 
 // ── Staging texture ───────────────────────────────────────────────────────────
 
-bool CaptureEngine::EnsureStagingTexture(int w, int h)
+bool DxgiCaptureEngine::EnsureStagingTexture(int w, int h)
 {
     if (m_stagingTex && m_stagingW == w && m_stagingH == h)
         return true;
@@ -155,7 +155,7 @@ bool CaptureEngine::EnsureStagingTexture(int w, int h)
 
 // ── Capture loop (runs on worker thread) ─────────────────────────────────────
 
-void CaptureEngine::CaptureLoop()
+void DxgiCaptureEngine::CaptureLoop()
 {
     while (!m_shouldStop.load())
     {
@@ -205,7 +205,7 @@ void CaptureEngine::CaptureLoop()
     }
 }
 
-bool CaptureEngine::ProcessFrame(IDXGIResource* resource)
+bool DxgiCaptureEngine::ProcessFrame(IDXGIResource* resource)
 {
     ID3D11Texture2D* srcTex = nullptr;
     HRESULT hr = resource->QueryInterface(

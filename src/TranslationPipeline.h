@@ -15,8 +15,8 @@
 #include "src/AppConfig.h"
 
 // Forward declarations
-class CaptureEngine;
-class OverlayWindow;
+class ICaptureEngine;
+class ITranslationOutput;
 
 // Coordinates the capture -> OCR -> translate -> overlay pipeline.
 class TranslationPipeline
@@ -26,9 +26,9 @@ public:
     ~TranslationPipeline();
 
     // Bind system components.
-    void SetComponents(CaptureEngine* capture,
+    void SetComponents(ICaptureEngine* capture,
                        ITranslateProvider* client,
-                       OverlayWindow* overlay);
+                       ITranslationOutput* overlay);
 
     // Set OCR Engine configuration.
     void SetOcrConfig(OcrType type, const std::wstring& detDir = L"", const std::wstring& recDir = L"");
@@ -71,9 +71,9 @@ private:
     bool PerformOcr(const cv::Mat& frameMat, OcrResult& outOcrResult);
     void TranslateAndShow(const OcrResult& ocrResult);
 
-    CaptureEngine*       m_capture = nullptr;
+    ICaptureEngine*      m_capture = nullptr;
     ITranslateProvider*  m_client = nullptr;
-    OverlayWindow*       m_overlay = nullptr;
+    ITranslationOutput*  m_overlay = nullptr;
 
     std::thread          m_schedulerThread;
     std::thread          m_networkThread;
@@ -81,10 +81,11 @@ private:
     std::atomic<bool>    m_shouldStop{ false };
     std::atomic<bool>    m_paused{ false };
 
-    // Waitable timer & events
-    HANDLE               m_hTimer = nullptr;
-    HANDLE               m_hStopEvent = nullptr;
-    HANDLE               m_hTriggerEvent = nullptr;
+    // Standard Concurrency primitives for scheduler
+    std::mutex              m_schedulerMutex;
+    std::condition_variable m_schedulerCV;
+    bool                    m_schedulerTriggered = false;
+
     std::atomic<int>     m_intervalMs{ 1000 };
     std::atomic<int>     m_scaleRoi{ 100 };
     DisplayMode          m_displayMode = DisplayMode::InPlace;

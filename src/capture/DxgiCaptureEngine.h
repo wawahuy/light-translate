@@ -1,61 +1,34 @@
 #pragma once
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
+#include "src/capture/ICaptureEngine.h"
 #include <d3d11.h>
 #include <dxgi1_2.h>
-#include <vector>
 #include <thread>
 #include <mutex>
 #include <atomic>
-#include <string>
 
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
 
-/// Raw captured frame in BGRA format (matches DXGI_FORMAT_B8G8R8A8_UNORM).
-struct Frame
-{
-    std::vector<uint8_t> data;      ///< BGRA pixels, row-major, top-down
-    int       width     = 0;
-    int       height    = 0;
-    ULONGLONG timestamp = 0;        ///< GetTickCount64() at capture time
-};
-
 /// Captures a screen region using the DXGI Desktop Duplication API.
-///
-/// CPU impact is near-zero: AcquireNextFrame blocks until the GPU presents a
-/// new frame (event-driven, no polling).  Only the requested ROI is copied to
-/// system memory.
-///
-/// Thread-safety: Start()/Stop()/GetLatestFrame() may be called from any thread.
-class CaptureEngine
+class DxgiCaptureEngine : public ICaptureEngine
 {
 public:
-    CaptureEngine();
-    ~CaptureEngine();
+    DxgiCaptureEngine();
+    ~DxgiCaptureEngine() override;
 
-    /// Initialise D3D11 + DXGI duplication for the given monitor.
-    /// @param monitorIndex  0 = primary monitor, 1 = second, …
-    bool Initialize(int monitorIndex = 0);
+    bool Initialize(int monitorIndex = 0) override;
+    void Shutdown() override;
 
-    /// Release all D3D/DXGI resources.
-    void Shutdown();
+    void SetCaptureRect(const RECT& rc) override { m_captureRect = rc; }
+    RECT GetCaptureRect() const override { return m_captureRect; }
 
-    /// Set the screen-coordinate region to capture.
-    void SetCaptureRect(const RECT& rc) { m_captureRect = rc; }
-    RECT GetCaptureRect() const { return m_captureRect; }
+    bool Start() override;
+    void Stop() override;
 
-    /// Start the internal capture thread.
-    bool Start();
+    bool GetLatestFrame(Frame& outFrame) override;
 
-    /// Stop the capture thread (blocks until thread exits).
-    void Stop();
-
-    /// Copy the most recent frame.  Returns false if no frame has been captured yet.
-    bool GetLatestFrame(Frame& outFrame);
-
-    bool         IsRunning()   const { return m_running.load(); }
-    std::wstring GetLastError() const { return m_lastError; }
+    bool IsRunning() const override { return m_running.load(); }
+    std::wstring GetLastError() const override { return m_lastError; }
 
 private:
     bool InitDXGI(int monitorIndex);

@@ -6,14 +6,11 @@
 #include <string>
 #include <vector>
 #include "src/AppConfig.h"
-#include "src/capture/CaptureEngine.h"
 #include "src/ui/OverlayWindow.h"
 #include "src/ui/CaptureHelperWindow.h"
 #include "src/ui/RegionSelectWindow.h"
 #include "src/ui/RegionResultWindow.h"
-#include "src/network/ITranslateProvider.h"
-#include "src/ocr/IOcrEngine.h"
-#include "src/TranslationPipeline.h"
+#include "src/AppController.h"
 
 /// The main application window that hosts all settings controls.
 /// Also owns the system tray icon when minimised.
@@ -135,14 +132,11 @@ private:
     std::vector<HWND>     m_overlayPosControls;  ///< Position controls (Overlay mode)
 
     AppConfig        m_config;
-    CaptureEngine    m_capture;
     OverlayWindow    m_overlay;
     CaptureHelperWindow m_captureHelper;
     RegionSelectWindow  m_regionSelect;
     RegionResultWindow  m_regionResult;
-    std::unique_ptr<ITranslateProvider> m_client;
-    TranslationPipeline   m_scheduler;
-    std::unique_ptr<IOcrEngine> m_regionOcr;   // Separate OCR engine for region capture
+    std::unique_ptr<AppController> m_controller;
 
     static constexpr wchar_t CLASS_NAME[] = L"GameTranslate_SettingsWnd";
     static constexpr int WND_W = 560;
