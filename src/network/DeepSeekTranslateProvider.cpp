@@ -135,7 +135,57 @@ static bool ParseDeepSeekResponse(const std::string& json, std::wstring& outText
 }
 
 DeepSeekTranslateProvider::DeepSeekTranslateProvider() = default;
-DeepSeekTranslateProvider::~DeepSeekTranslateProvider() = default;
+
+DeepSeekTranslateProvider::~DeepSeekTranslateProvider()
+{
+    CloseConnection();
+}
+
+void DeepSeekTranslateProvider::CloseConnection()
+{
+    if (m_hConn)
+    {
+        WinHttpCloseHandle(m_hConn);
+        m_hConn = nullptr;
+    }
+    if (m_hSession)
+    {
+        WinHttpCloseHandle(m_hSession);
+        m_hSession = nullptr;
+    }
+    m_lastHost.clear();
+    m_lastPort = 0;
+}
+
+bool DeepSeekTranslateProvider::EnsureConnected(const std::wstring& host, int port)
+{
+    if (m_hConn && (m_lastHost != host || m_lastPort != port))
+    {
+        CloseConnection();
+    }
+
+    if (!m_hSession)
+    {
+        m_hSession = WinHttpOpen(
+            L"GameTranslate/1.0",
+            WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+            WINHTTP_NO_PROXY_NAME,
+            WINHTTP_NO_PROXY_BYPASS,
+            0
+        );
+        if (!m_hSession) return false;
+    }
+
+    if (!m_hConn)
+    {
+        m_hConn = WinHttpConnect(m_hSession, host.c_str(), static_cast<INTERNET_PORT>(port), 0);
+        if (!m_hConn) return false;
+        m_lastHost = host;
+        m_lastPort = port;
+    }
+
+    return true;
+}
 
 void DeepSeekTranslateProvider::SetApiUrl(const std::wstring& url) { m_apiUrl = url; }
 void DeepSeekTranslateProvider::SetApiKey(const std::wstring& key) { m_apiKey = key; }
@@ -178,21 +228,9 @@ std::wstring DeepSeekTranslateProvider::Translate(const std::wstring& text)
 
     std::string jsonBody = "{\"model\":\"" + escapedModel + "\",\"messages\":[{\"role\":\"system\",\"content\":\"Translate the input text to " + escapedTargetLang + ". Output ONLY the direct translation without any explanations, notes, or extra conversational text. Keep the original formatting and line breaks.\"},{\"role\":\"user\",\"content\":\"" + escapedText + "\"}],\"stream\":false}";
 
-    // Setup session/connection/request
-    HINTERNET hSession = WinHttpOpen(
-        L"GameTranslate/1.0",
-        WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-        WINHTTP_NO_PROXY_NAME,
-        WINHTTP_NO_PROXY_BYPASS,
-        0
-    );
-    if (!hSession) { m_lastError = L"WinHttpOpen failed"; return {}; }
-
-    HINTERNET hConn = WinHttpConnect(hSession, host, uc.nPort, 0);
-    if (!hConn)
+    if (!EnsureConnected(host, uc.nPort))
     {
-        WinHttpCloseHandle(hSession);
-        m_lastError = L"WinHttpConnect failed";
+        m_lastError = L"WinHttp connection failed";
         return {};
     }
 
@@ -200,7 +238,7 @@ std::wstring DeepSeekTranslateProvider::Translate(const std::wstring& text)
     if (extra[0]) fullPath += extra;
 
     HINTERNET hReq = WinHttpOpenRequest(
-        hConn, L"POST", fullPath.c_str(),
+        m_hConn, L"POST", fullPath.c_str(),
         nullptr,
         WINHTTP_NO_REFERER,
         WINHTTP_DEFAULT_ACCEPT_TYPES,
@@ -208,8 +246,6 @@ std::wstring DeepSeekTranslateProvider::Translate(const std::wstring& text)
     );
     if (!hReq)
     {
-        WinHttpCloseHandle(hConn);
-        WinHttpCloseHandle(hSession);
         m_lastError = L"WinHttpOpenRequest failed";
         return {};
     }
@@ -233,11 +269,38 @@ std::wstring DeepSeekTranslateProvider::Translate(const std::wstring& text)
         0
     );
 
-    if (!ok || !WinHttpReceiveResponse(hReq, nullptr))
+    // Auto-reconnect retry if connection was reset or closed by server
+    if (!ok)
     {
         WinHttpCloseHandle(hReq);
-        WinHttpCloseHandle(hConn);
-        WinHttpCloseHandle(hSession);
+        CloseConnection();
+        if (EnsureConnected(host, uc.nPort))
+        {
+            hReq = WinHttpOpenRequest(
+                m_hConn, L"POST", fullPath.c_str(),
+                nullptr,
+                WINHTTP_NO_REFERER,
+                WINHTTP_DEFAULT_ACCEPT_TYPES,
+                isHttps ? WINHTTP_FLAG_SECURE : 0
+            );
+            if (hReq)
+            {
+                WinHttpAddRequestHeaders(hReq, authHeader.c_str(), static_cast<DWORD>(-1L),
+                                         WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
+                ok = WinHttpSendRequest(
+                    hReq,
+                    WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                    const_cast<char*>(jsonBody.data()), static_cast<DWORD>(jsonBody.size()),
+                    static_cast<DWORD>(jsonBody.size()),
+                    0
+                );
+            }
+        }
+    }
+
+    if (!ok || !WinHttpReceiveResponse(hReq, nullptr))
+    {
+        if (hReq) WinHttpCloseHandle(hReq);
         m_lastError = L"HTTP request failed";
         return {};
     }
@@ -263,8 +326,6 @@ std::wstring DeepSeekTranslateProvider::Translate(const std::wstring& text)
         }
 
         WinHttpCloseHandle(hReq);
-        WinHttpCloseHandle(hConn);
-        WinHttpCloseHandle(hSession);
 
         std::wstring errStr = Utf8ToWide(responseBody);
         m_lastError = L"API returned HTTP " + std::to_wstring(statusCode) + L": " + errStr;
@@ -283,8 +344,6 @@ std::wstring DeepSeekTranslateProvider::Translate(const std::wstring& text)
     }
 
     WinHttpCloseHandle(hReq);
-    WinHttpCloseHandle(hConn);
-    WinHttpCloseHandle(hSession);
 
     std::wstring result;
     if (!ParseDeepSeekResponse(responseBody, result))

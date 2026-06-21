@@ -1,6 +1,8 @@
 #pragma once
 #include "src/network/ITranslateProvider.h"
 #include <string>
+#include <windows.h>
+#include <winhttp.h>
 
 // DeepSeek implementation of ITranslateProvider.
 class DeepSeekTranslateProvider : public ITranslateProvider
@@ -18,9 +20,17 @@ public:
     const std::wstring& GetLastError() const override { return m_lastError; }
 
 private:
+    void CloseConnection();
+    bool EnsureConnected(const std::wstring& host, int port);
+
     std::wstring m_apiUrl;
     std::wstring m_apiKey;
     std::wstring m_apiModel;
     std::wstring m_targetLanguage = L"Vietnamese";
     std::wstring m_lastError;
+
+    HINTERNET m_hSession = nullptr;
+    HINTERNET m_hConn = nullptr;
+    std::wstring m_lastHost;
+    int m_lastPort = 0;
 };
