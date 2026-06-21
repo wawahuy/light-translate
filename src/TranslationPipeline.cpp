@@ -405,7 +405,7 @@ bool TranslationPipeline::PerformOcr(const cv::Mat& frameMat, OcrResult& outOcrR
             DetectionResult detection = m_ocrEngine->Detect(frameMat);
             if (!detection.empty())
             {
-                m_boxDiffDetector.Update(detection.boxes, detection.regionGrays);
+                m_boxDiffDetector.Update(frameMat, detection.boxes);
                 m_lastBoxes = detection.boxes;
                 outOcrResult = m_ocrEngine->Recognize(detection);
                 hasText = !outOcrResult.empty();

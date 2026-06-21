@@ -3,8 +3,6 @@
 #include <memory>
 #include <opencv2/core.hpp>
 
-class CropByPolys;
-
 /// Detects whether text inside the previously-detected bounding boxes has changed
 /// between consecutive frames. If unchanged, we can skip running text detection.
 class BoxDiffDetector
@@ -19,12 +17,6 @@ public:
     // @param threshold     Average pixel difference threshold (default 1.0)
     // @returns true if changed or no boxes saved, false if unchanged
     bool DetectChange(const cv::Mat& currentFrame, double threshold = 1.0);
-
-    // Update the saved boxes and their grayscale crops.
-    // @param boxes       The new box coordinates (polygons)
-    // @param regionGrays The grayscale crops of those boxes
-    void Update(const std::vector<std::vector<cv::Point2f>>& boxes,
-                const std::vector<cv::Mat>& regionGrays);
 
     // Update the saved boxes by cropping the current frame and converting to grayscale internally.
     // @param currentFrame The current BGR frame
@@ -44,6 +36,5 @@ public:
 private:
     std::vector<std::vector<cv::Point2f>> m_lastBoxes;
     std::vector<cv::Mat>                  m_lastGrays;
-    std::unique_ptr<CropByPolys>          m_cropByPolys;
     double                                m_lastDiff = 0.0;
 };

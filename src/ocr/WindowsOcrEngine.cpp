@@ -84,10 +84,16 @@ cv::Mat WindowsOcrEngine::PrepareFrame(const cv::Mat& bgraFrame)
             BitmapAlphaMode::Premultiplied
         );
 
-        // Copy raw pixel bytes to bitmap buffer
-        DataWriter writer;
-        writer.WriteBytes({ bgraFrame.data, bgraFrame.data + (bgraFrame.total() * bgraFrame.elemSize()) });
-        softwareBitmap.CopyFromBuffer(writer.DetachBuffer());
+        // Lock the buffer and copy directly (Single Copy)
+        {
+            BitmapBuffer bitmapBuffer = softwareBitmap.LockBuffer(BitmapBufferAccessMode::Write);
+            winrt::Windows::Foundation::IMemoryBufferReference reference = bitmapBuffer.CreateReference();
+            uint8_t* data = reference.data();
+            uint32_t capacity = reference.Capacity();
+
+            size_t bytesToCopy = bgraFrame.total() * bgraFrame.elemSize();
+            std::memcpy(data, bgraFrame.data, (bytesToCopy < capacity) ? bytesToCopy : capacity);
+        }
 
         // Process OCR synchronously
         winrt::Windows::Media::Ocr::OcrResult winrtOcrResult = m_ocrEngine.RecognizeAsync(softwareBitmap).get();
