@@ -1,31 +1,7 @@
 #include "src/network/DeepSeekTranslateProvider.h"
+#include "src/utils/StringUtils.h"
 #include <windows.h>
-#include <winhttp.h>
 #include <sstream>
-#include <vector>
-
-#pragma comment(lib, "winhttp.lib")
-
-// Helpers for UTF-8/UTF-16 conversion
-static std::string WideToUtf8(const std::wstring& wstr)
-{
-    if (wstr.empty()) return {};
-    int sizeNeeded = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, nullptr, 0, nullptr, nullptr);
-    if (sizeNeeded <= 0) return {};
-    std::string strTo(sizeNeeded - 1, 0);
-    WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, &strTo[0], sizeNeeded, nullptr, nullptr);
-    return strTo;
-}
-
-static std::wstring Utf8ToWide(const std::string& str)
-{
-    if (str.empty()) return {};
-    int sizeNeeded = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, nullptr, 0);
-    if (sizeNeeded <= 0) return {};
-    std::wstring wstrTo(sizeNeeded - 1, 0);
-    MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, &wstrTo[0], sizeNeeded);
-    return wstrTo;
-}
 
 static std::string EscapeJsonString(const std::string& input)
 {
@@ -135,62 +111,7 @@ static bool ParseDeepSeekResponse(const std::string& json, std::wstring& outText
 }
 
 DeepSeekTranslateProvider::DeepSeekTranslateProvider() = default;
-
-DeepSeekTranslateProvider::~DeepSeekTranslateProvider()
-{
-    CloseConnection();
-}
-
-void DeepSeekTranslateProvider::CloseConnection()
-{
-    if (m_hConn)
-    {
-        WinHttpCloseHandle(m_hConn);
-        m_hConn = nullptr;
-    }
-    if (m_hSession)
-    {
-        WinHttpCloseHandle(m_hSession);
-        m_hSession = nullptr;
-    }
-    m_lastHost.clear();
-    m_lastPort = 0;
-}
-
-bool DeepSeekTranslateProvider::EnsureConnected(const std::wstring& host, int port)
-{
-    if (m_hConn && (m_lastHost != host || m_lastPort != port))
-    {
-        CloseConnection();
-    }
-
-    if (!m_hSession)
-    {
-        m_hSession = WinHttpOpen(
-            L"GameTranslate/1.0",
-            WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-            WINHTTP_NO_PROXY_NAME,
-            WINHTTP_NO_PROXY_BYPASS,
-            0
-        );
-        if (!m_hSession) return false;
-    }
-
-    if (!m_hConn)
-    {
-        m_hConn = WinHttpConnect(m_hSession, host.c_str(), static_cast<INTERNET_PORT>(port), 0);
-        if (!m_hConn) return false;
-        m_lastHost = host;
-        m_lastPort = port;
-    }
-
-    return true;
-}
-
-void DeepSeekTranslateProvider::SetApiUrl(const std::wstring& url) { m_apiUrl = url; }
-void DeepSeekTranslateProvider::SetApiKey(const std::wstring& key) { m_apiKey = key; }
-void DeepSeekTranslateProvider::SetApiModel(const std::wstring& model) { m_apiModel = model; }
-void DeepSeekTranslateProvider::SetTargetLanguage(const std::wstring& targetLanguage) { m_targetLanguage = targetLanguage; }
+DeepSeekTranslateProvider::~DeepSeekTranslateProvider() = default;
 
 std::wstring DeepSeekTranslateProvider::Translate(const std::wstring& text)
 {
@@ -200,23 +121,6 @@ std::wstring DeepSeekTranslateProvider::Translate(const std::wstring& text)
     }
 
     std::wstring url = m_apiUrl.empty() ? L"https://api.deepseek.com/chat/completions" : m_apiUrl;
-
-    // Parse URL using WinHttpCrackUrl
-    URL_COMPONENTS uc{};
-    uc.dwStructSize = sizeof(uc);
-    wchar_t scheme[16]{}, host[256]{}, path[512]{}, extra[256]{};
-    uc.lpszScheme      = scheme;  uc.dwSchemeLength      = 16;
-    uc.lpszHostName    = host;    uc.dwHostNameLength    = 256;
-    uc.lpszUrlPath     = path;    uc.dwUrlPathLength     = 512;
-    uc.lpszExtraInfo   = extra;   uc.dwExtraInfoLength   = 256;
-
-    if (!WinHttpCrackUrl(url.c_str(), 0, 0, &uc))
-    {
-        m_lastError = L"Invalid API URL: " + url;
-        return {};
-    }
-
-    const bool isHttps = (uc.nScheme == INTERNET_SCHEME_HTTPS);
 
     // Build JSON payload
     std::string utf8Text = WideToUtf8(text);
@@ -228,28 +132,6 @@ std::wstring DeepSeekTranslateProvider::Translate(const std::wstring& text)
 
     std::string jsonBody = "{\"model\":\"" + escapedModel + "\",\"messages\":[{\"role\":\"system\",\"content\":\"Translate the input text to " + escapedTargetLang + ". Output ONLY the direct translation without any explanations, notes, or extra conversational text. Keep the original formatting and line breaks.\"},{\"role\":\"user\",\"content\":\"" + escapedText + "\"}],\"stream\":false}";
 
-    if (!EnsureConnected(host, uc.nPort))
-    {
-        m_lastError = L"WinHttp connection failed";
-        return {};
-    }
-
-    std::wstring fullPath = path;
-    if (extra[0]) fullPath += extra;
-
-    HINTERNET hReq = WinHttpOpenRequest(
-        m_hConn, L"POST", fullPath.c_str(),
-        nullptr,
-        WINHTTP_NO_REFERER,
-        WINHTTP_DEFAULT_ACCEPT_TYPES,
-        isHttps ? WINHTTP_FLAG_SECURE : 0
-    );
-    if (!hReq)
-    {
-        m_lastError = L"WinHttpOpenRequest failed";
-        return {};
-    }
-
     // Set authorization headers
     std::wstring authHeader = L"Content-Type: application/json\r\n";
     if (!m_apiKey.empty())
@@ -257,93 +139,11 @@ std::wstring DeepSeekTranslateProvider::Translate(const std::wstring& text)
         authHeader += L"Authorization: Bearer " + m_apiKey + L"\r\n";
     }
 
-    WinHttpAddRequestHeaders(hReq, authHeader.c_str(), static_cast<DWORD>(-1L),
-                             WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
-
-    // Send request
-    BOOL ok = WinHttpSendRequest(
-        hReq,
-        WINHTTP_NO_ADDITIONAL_HEADERS, 0,
-        const_cast<char*>(jsonBody.data()), static_cast<DWORD>(jsonBody.size()),
-        static_cast<DWORD>(jsonBody.size()),
-        0
-    );
-
-    // Auto-reconnect retry if connection was reset or closed by server
-    if (!ok)
-    {
-        WinHttpCloseHandle(hReq);
-        CloseConnection();
-        if (EnsureConnected(host, uc.nPort))
-        {
-            hReq = WinHttpOpenRequest(
-                m_hConn, L"POST", fullPath.c_str(),
-                nullptr,
-                WINHTTP_NO_REFERER,
-                WINHTTP_DEFAULT_ACCEPT_TYPES,
-                isHttps ? WINHTTP_FLAG_SECURE : 0
-            );
-            if (hReq)
-            {
-                WinHttpAddRequestHeaders(hReq, authHeader.c_str(), static_cast<DWORD>(-1L),
-                                         WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
-                ok = WinHttpSendRequest(
-                    hReq,
-                    WINHTTP_NO_ADDITIONAL_HEADERS, 0,
-                    const_cast<char*>(jsonBody.data()), static_cast<DWORD>(jsonBody.size()),
-                    static_cast<DWORD>(jsonBody.size()),
-                    0
-                );
-            }
-        }
-    }
-
-    if (!ok || !WinHttpReceiveResponse(hReq, nullptr))
-    {
-        if (hReq) WinHttpCloseHandle(hReq);
-        m_lastError = L"HTTP request failed";
-        return {};
-    }
-
-    // Check HTTP status code
-    DWORD statusCode  = 0;
-    DWORD statusSize  = sizeof(statusCode);
-    WinHttpQueryHeaders(hReq,
-        WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-        nullptr, &statusCode, &statusSize, nullptr);
-
-    if (statusCode != 200)
-    {
-        // Read response body to extract error message if any
-        std::string responseBody;
-        DWORD available = 0;
-        while (WinHttpQueryDataAvailable(hReq, &available) && available > 0)
-        {
-            std::string chunk(available, '\0');
-            DWORD read = 0;
-            WinHttpReadData(hReq, chunk.data(), available, &read);
-            responseBody.append(chunk.data(), read);
-        }
-
-        WinHttpCloseHandle(hReq);
-
-        std::wstring errStr = Utf8ToWide(responseBody);
-        m_lastError = L"API returned HTTP " + std::to_wstring(statusCode) + L": " + errStr;
-        return {};
-    }
-
-    // Read response body
     std::string responseBody;
-    DWORD available = 0;
-    while (WinHttpQueryDataAvailable(hReq, &available) && available > 0)
+    if (!SendHttpRequest(L"POST", url, authHeader, jsonBody, responseBody))
     {
-        std::string chunk(available, '\0');
-        DWORD read = 0;
-        WinHttpReadData(hReq, chunk.data(), available, &read);
-        responseBody.append(chunk.data(), read);
+        return {};
     }
-
-    WinHttpCloseHandle(hReq);
 
     std::wstring result;
     if (!ParseDeepSeekResponse(responseBody, result))
