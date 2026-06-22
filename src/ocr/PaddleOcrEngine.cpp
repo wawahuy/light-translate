@@ -56,9 +56,8 @@ bool PaddleOcrEngine::Initialize()
 
 cv::Mat PaddleOcrEngine::PrepareFrame(const cv::Mat& bgraFrame)
 {
-    cv::Mat bgrFrame;
-    cv::cvtColor(bgraFrame, bgrFrame, cv::COLOR_BGRA2BGR);
-    return bgrFrame;
+    cv::cvtColor(bgraFrame, m_bgrFrame, cv::COLOR_BGRA2BGR);
+    return m_bgrFrame;
 }
 
 OcrResult PaddleOcrEngine::Recognize(const cv::Mat& bgrFrame)
@@ -73,8 +72,8 @@ DetectionResult PaddleOcrEngine::Detect(const cv::Mat& bgrFrame)
     DetectionResult result;
     if (!m_initialized) return result;
 
-    // Run text detection model
-    std::vector<cv::Mat> detInput = { bgrFrame.clone() };
+    // Run text detection model (avoid cloning the frame header/pixels)
+    std::vector<cv::Mat> detInput = { bgrFrame };
     m_textDetModel->Predict(detInput);
     std::vector<TextDetPredictorResult> detResults =
         static_cast<TextDetPredictor*>(m_textDetModel.get())->PredictorResult();
@@ -92,18 +91,6 @@ DetectionResult PaddleOcrEngine::Detect(const cv::Mat& bgrFrame)
 
     result.croppedTexts = cropResult.value();
     result.boxes = dt_polys;
-
-    // Build grayscale crops for diff detection
-    result.regionGrays.reserve(result.croppedTexts.size());
-    for (auto& crop : result.croppedTexts)
-    {
-        cv::Mat gray;
-        if (crop.channels() == 1)
-            gray = crop.clone();
-        else
-            cv::cvtColor(crop, gray, cv::COLOR_BGR2GRAY);
-        result.regionGrays.push_back(gray);
-    }
 
     return result;
 }
@@ -158,5 +145,6 @@ void PaddleOcrEngine::Reset()
     m_textDetModel.reset();
     m_textRecModel.reset();
     m_cropByPolys.reset();
+    m_bgrFrame.release();
     m_initialized = false;
 }

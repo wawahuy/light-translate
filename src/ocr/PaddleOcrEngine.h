@@ -39,4 +39,6 @@ private:
     std::unique_ptr<BasePredictor> m_textRecModel;
     std::unique_ptr<CropByPolys>   m_cropByPolys;
     bool                           m_initialized = false;
+    cv::Mat                        m_bgrFrame; // Cache for BGR converted frame
 };
+

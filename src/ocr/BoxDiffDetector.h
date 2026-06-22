@@ -37,4 +37,5 @@ private:
     std::vector<std::vector<cv::Point2f>> m_lastBoxes;
     std::vector<cv::Mat>                  m_lastGrays;
     double                                m_lastDiff = 0.0;
+    cv::Mat                               m_currentFrameGray; // Cache for full-screen grayscale frame
 };

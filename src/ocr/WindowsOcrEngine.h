@@ -1,6 +1,7 @@
 #pragma once
 #include "src/ocr/IOcrEngine.h"
 #include <winrt/Windows.Media.Ocr.h>
+#include <winrt/Windows.Graphics.Imaging.h>
 
 // Windows OCR engine implementation using C++/WinRT.
 class WindowsOcrEngine : public IOcrEngine
@@ -19,4 +20,5 @@ public:
 private:
     bool m_initialized = false;
     winrt::Windows::Media::Ocr::OcrEngine m_ocrEngine = nullptr;
+    winrt::Windows::Graphics::Imaging::SoftwareBitmap m_cachedSoftwareBitmap = nullptr;
 };

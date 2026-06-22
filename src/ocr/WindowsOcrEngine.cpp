@@ -58,6 +58,7 @@ bool WindowsOcrEngine::Initialize()
 void WindowsOcrEngine::Reset()
 {
     m_ocrEngine = nullptr;
+    m_cachedSoftwareBitmap = nullptr;
     m_initialized = false;
 }
 
@@ -76,17 +77,22 @@ cv::Mat WindowsOcrEngine::PrepareFrame(const cv::Mat& bgraFrame)
 
     try
     {
-        // Construct a BGRA SoftwareBitmap
-        SoftwareBitmap softwareBitmap(
-            BitmapPixelFormat::Bgra8,
-            bgraFrame.cols,
-            bgraFrame.rows,
-            BitmapAlphaMode::Premultiplied
-        );
+        // Construct or reuse a BGRA SoftwareBitmap
+        if (!m_cachedSoftwareBitmap ||
+            m_cachedSoftwareBitmap.PixelWidth() != bgraFrame.cols ||
+            m_cachedSoftwareBitmap.PixelHeight() != bgraFrame.rows)
+        {
+            m_cachedSoftwareBitmap = SoftwareBitmap(
+                BitmapPixelFormat::Bgra8,
+                bgraFrame.cols,
+                bgraFrame.rows,
+                BitmapAlphaMode::Premultiplied
+            );
+        }
 
         // Lock the buffer and copy directly (Single Copy)
         {
-            BitmapBuffer bitmapBuffer = softwareBitmap.LockBuffer(BitmapBufferAccessMode::Write);
+            BitmapBuffer bitmapBuffer = m_cachedSoftwareBitmap.LockBuffer(BitmapBufferAccessMode::Write);
             winrt::Windows::Foundation::IMemoryBufferReference reference = bitmapBuffer.CreateReference();
             uint8_t* data = reference.data();
             uint32_t capacity = reference.Capacity();
@@ -96,7 +102,7 @@ cv::Mat WindowsOcrEngine::PrepareFrame(const cv::Mat& bgraFrame)
         }
 
         // Process OCR synchronously
-        winrt::Windows::Media::Ocr::OcrResult winrtOcrResult = m_ocrEngine.RecognizeAsync(softwareBitmap).get();
+        winrt::Windows::Media::Ocr::OcrResult winrtOcrResult = m_ocrEngine.RecognizeAsync(m_cachedSoftwareBitmap).get();
 
         // Extract lines, texts, and box coordinates
         for (auto const& line : winrtOcrResult.Lines())
