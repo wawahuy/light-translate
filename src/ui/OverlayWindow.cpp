@@ -96,6 +96,20 @@ void OverlayWindow::Destroy()
         DestroyWindow(m_hwnd);
         m_hwnd = nullptr;
     }
+
+    if (m_cachedBmp)
+    {
+        DeleteObject(m_cachedBmp);
+        m_cachedBmp = nullptr;
+    }
+    if (m_cachedMemDC)
+    {
+        DeleteDC(m_cachedMemDC);
+        m_cachedMemDC = nullptr;
+    }
+    m_cachedBits = nullptr;
+    m_cachedWidth = 0;
+    m_cachedHeight = 0;
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -192,27 +206,37 @@ void OverlayWindow::EnableDrag(bool enable)
 
 // ── Rendering ─────────────────────────────────────────────────────────────────
 
-void OverlayWindow::PremultiplyAlpha(void* pvBits, int width, int height) noexcept
+void OverlayWindow::PremultiplyAlpha(void* pvBits, int width, int height, const RECT& rect) noexcept
 {
     // UpdateLayeredWindow with AC_SRC_ALPHA requires premultiplied alpha.
     auto* pixels = static_cast<UINT*>(pvBits);
-    const int count = width * height;
-    for (int i = 0; i < count; ++i)
+    
+    int startY = std::max(0, static_cast<int>(rect.top));
+    int endY = std::min(height, static_cast<int>(rect.bottom));
+    int startX = std::max(0, static_cast<int>(rect.left));
+    int endX = std::min(width, static_cast<int>(rect.right));
+
+    for (int y = startY; y < endY; ++y)
     {
-        UINT p = pixels[i];
-        BYTE a = static_cast<BYTE>(p >> 24);
-        if (a == 0)
+        int rowOffset = y * width;
+        for (int x = startX; x < endX; ++x)
         {
-            pixels[i] = 0;
-        }
-        else if (a < 255)
-        {
-            BYTE r = static_cast<BYTE>((static_cast<BYTE>(p >> 16) * a + 127) / 255);
-            BYTE g = static_cast<BYTE>((static_cast<BYTE>(p >>  8) * a + 127) / 255);
-            BYTE b = static_cast<BYTE>((static_cast<BYTE>(p >>  0) * a + 127) / 255);
-            pixels[i] = (static_cast<UINT>(a) << 24) |
-                        (static_cast<UINT>(r) << 16) |
-                        (static_cast<UINT>(g) <<  8) | b;
+            int idx = rowOffset + x;
+            UINT p = pixels[idx];
+            BYTE a = static_cast<BYTE>(p >> 24);
+            if (a == 0)
+            {
+                pixels[idx] = 0;
+            }
+            else if (a < 255)
+            {
+                BYTE r = static_cast<BYTE>((static_cast<BYTE>(p >> 16) * a + 127) / 255);
+                BYTE g = static_cast<BYTE>((static_cast<BYTE>(p >>  8) * a + 127) / 255);
+                BYTE b = static_cast<BYTE>((static_cast<BYTE>(p >>  0) * a + 127) / 255);
+                pixels[idx] = (static_cast<UINT>(a) << 24) |
+                              (static_cast<UINT>(r) << 16) |
+                              (static_cast<UINT>(g) <<  8) | b;
+            }
         }
     }
 }
@@ -224,34 +248,52 @@ void OverlayWindow::Redraw()
     std::lock_guard<std::mutex> lock(m_renderMutex);
 
     HDC screenDC = GetDC(nullptr);
-    HDC memDC    = CreateCompatibleDC(screenDC);
 
-    // 32-bit top-down DIB for per-pixel alpha
-    BITMAPINFOHEADER bih{};
-    bih.biSize        = sizeof(bih);
-    bih.biWidth       = m_width;
-    bih.biHeight      = -m_height;    // negative = top-down
-    bih.biPlanes      = 1;
-    bih.biBitCount    = 32;
-    bih.biCompression = BI_RGB;
-
-    void* pvBits = nullptr;
-    HBITMAP hBmp = CreateDIBSection(memDC,
-        reinterpret_cast<BITMAPINFO*>(&bih), DIB_RGB_COLORS, &pvBits, nullptr, 0);
-    if (!hBmp)
+    // Reuse or recreate cached GDI resources if size changes
+    if (!m_cachedMemDC || m_cachedWidth != m_width || m_cachedHeight != m_height)
     {
-        DeleteDC(memDC);
-        ReleaseDC(nullptr, screenDC);
-        return;
+        if (m_cachedBmp) { DeleteObject(m_cachedBmp); m_cachedBmp = nullptr; }
+        if (m_cachedMemDC) { DeleteDC(m_cachedMemDC); m_cachedMemDC = nullptr; }
+
+        m_cachedMemDC = CreateCompatibleDC(screenDC);
+
+        // 32-bit top-down DIB for per-pixel alpha
+        BITMAPINFOHEADER bih{};
+        bih.biSize        = sizeof(bih);
+        bih.biWidth       = m_width;
+        bih.biHeight      = -m_height;    // negative = top-down
+        bih.biPlanes      = 1;
+        bih.biBitCount    = 32;
+        bih.biCompression = BI_RGB;
+
+        m_cachedBmp = CreateDIBSection(m_cachedMemDC,
+            reinterpret_cast<BITMAPINFO*>(&bih), DIB_RGB_COLORS, &m_cachedBits, nullptr, 0);
+
+        if (m_cachedBmp)
+        {
+            SelectObject(m_cachedMemDC, m_cachedBmp);
+            m_cachedWidth = m_width;
+            m_cachedHeight = m_height;
+        }
+        else
+        {
+            DeleteDC(m_cachedMemDC);
+            m_cachedMemDC = nullptr;
+            m_cachedBits = nullptr;
+            m_cachedWidth = 0;
+            m_cachedHeight = 0;
+            ReleaseDC(nullptr, screenDC);
+            return;
+        }
     }
 
-    HBITMAP hOldBmp = static_cast<HBITMAP>(SelectObject(memDC, hBmp));
-
     // Clear all pixels to transparent black
-    std::memset(pvBits, 0, static_cast<size_t>(m_width) * m_height * 4);
+    std::memset(m_cachedBits, 0, static_cast<size_t>(m_width) * m_height * 4);
+
+    RECT drawRect = { 0, 0, 0, 0 };
 
     {
-        Gdiplus::Graphics g(memDC);
+        Gdiplus::Graphics g(m_cachedMemDC);
         g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
         g.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAliasGridFit);
 
@@ -266,6 +308,9 @@ void OverlayWindow::Redraw()
             g.DrawRectangle(&border, 1.0f, 1.0f,
                             static_cast<float>(m_width - 2),
                             static_cast<float>(m_height - 2));
+
+            // Must premultiply the entire window
+            drawRect = { 0, 0, m_width, m_height };
         }
 
         if (!m_text.empty())
@@ -373,6 +418,16 @@ void OverlayWindow::Redraw()
                 fmt.SetLineAlignment(Gdiplus::StringAlignmentFar);
             }
 
+            // Set up dirty rect if not in drag mode (which already covers the whole window)
+            if (!m_dragMode)
+            {
+                int inflate = static_cast<int>(m_strokeWidth + 4.0f);
+                drawRect.left   = std::max(0L, static_cast<LONG>(layoutRect.X) - inflate);
+                drawRect.top    = std::max(0L, static_cast<LONG>(layoutRect.Y) - inflate);
+                drawRect.right  = std::min(static_cast<LONG>(m_width), static_cast<LONG>(layoutRect.X + layoutRect.Width) + inflate);
+                drawRect.bottom = std::min(static_cast<LONG>(m_height), static_cast<LONG>(layoutRect.Y + layoutRect.Height) + inflate);
+            }
+
             // Build GraphicsPath to allow stroke (outline) rendering
             const int fontStyle = m_fontBold ? Gdiplus::FontStyleBold : Gdiplus::FontStyleRegular;
             Gdiplus::GraphicsPath path;
@@ -438,8 +493,8 @@ void OverlayWindow::Redraw()
         }
     }
 
-    // Premultiply alpha before passing to UpdateLayeredWindow
-    PremultiplyAlpha(pvBits, m_width, m_height);
+    // Premultiply alpha in-place before passing to UpdateLayeredWindow
+    PremultiplyAlpha(m_cachedBits, m_width, m_height, drawRect);
 
     BLENDFUNCTION blend{};
     blend.BlendOp             = AC_SRC_OVER;
@@ -451,11 +506,8 @@ void OverlayWindow::Redraw()
     SIZE  szWnd = { m_width, m_height };
 
     UpdateLayeredWindow(m_hwnd, screenDC, &ptDst, &szWnd,
-                        memDC, &ptSrc, 0, &blend, ULW_ALPHA);
+                        m_cachedMemDC, &ptSrc, 0, &blend, ULW_ALPHA);
 
-    SelectObject(memDC, hOldBmp);
-    DeleteObject(hBmp);
-    DeleteDC(memDC);
     ReleaseDC(nullptr, screenDC);
 }
 

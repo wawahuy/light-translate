@@ -13,6 +13,21 @@ bool BoxDiffDetector::DetectChange(const cv::Mat& currentFrame, double threshold
         return true;
     }
 
+    // Convert the entire currentFrame to grayscale once
+    cv::Mat currentFrameGray;
+    if (currentFrame.channels() == 1)
+    {
+        currentFrameGray = currentFrame;
+    }
+    else if (currentFrame.channels() == 4)
+    {
+        cv::cvtColor(currentFrame, currentFrameGray, cv::COLOR_BGRA2GRAY);
+    }
+    else
+    {
+        cv::cvtColor(currentFrame, currentFrameGray, cv::COLOR_BGR2GRAY);
+    }
+
     double totalDiff = 0.0;
     int validCount = 0;
 
@@ -25,7 +40,7 @@ bool BoxDiffDetector::DetectChange(const cv::Mat& currentFrame, double threshold
         }
 
         cv::Rect rect = cv::boundingRect(poly);
-        rect = rect & cv::Rect(0, 0, currentFrame.cols, currentFrame.rows);
+        rect = rect & cv::Rect(0, 0, currentFrameGray.cols, currentFrameGray.rows);
 
         if (rect.width <= 0 || rect.height <= 0)
         {
@@ -33,20 +48,8 @@ bool BoxDiffDetector::DetectChange(const cv::Mat& currentFrame, double threshold
             break;
         }
 
-        cv::Mat crop = currentFrame(rect);
-        cv::Mat gray;
-        if (crop.channels() == 1)
-        {
-            gray = crop; // zero-copy view is fine here as it's temporary for DetectChange
-        }
-        else if (crop.channels() == 4)
-        {
-            cv::cvtColor(crop, gray, cv::COLOR_BGRA2GRAY);
-        }
-        else
-        {
-            cv::cvtColor(crop, gray, cv::COLOR_BGR2GRAY);
-        }
+        // Zero-copy view from the grayscale frame
+        cv::Mat gray = currentFrameGray(rect);
 
         if (gray.size() == m_lastGrays[i].size())
         {
@@ -80,6 +83,21 @@ void BoxDiffDetector::Update(const cv::Mat& currentFrame,
     m_lastGrays.clear();
     m_lastGrays.reserve(boxes.size());
 
+    // Convert the entire currentFrame to grayscale once
+    cv::Mat currentFrameGray;
+    if (currentFrame.channels() == 1)
+    {
+        currentFrameGray = currentFrame;
+    }
+    else if (currentFrame.channels() == 4)
+    {
+        cv::cvtColor(currentFrame, currentFrameGray, cv::COLOR_BGRA2GRAY);
+    }
+    else
+    {
+        cv::cvtColor(currentFrame, currentFrameGray, cv::COLOR_BGR2GRAY);
+    }
+
     for (const auto& poly : boxes)
     {
         if (poly.empty())
@@ -89,7 +107,7 @@ void BoxDiffDetector::Update(const cv::Mat& currentFrame,
         }
 
         cv::Rect rect = cv::boundingRect(poly);
-        rect = rect & cv::Rect(0, 0, currentFrame.cols, currentFrame.rows);
+        rect = rect & cv::Rect(0, 0, currentFrameGray.cols, currentFrameGray.rows);
 
         if (rect.width <= 0 || rect.height <= 0)
         {
@@ -97,20 +115,8 @@ void BoxDiffDetector::Update(const cv::Mat& currentFrame,
             continue;
         }
 
-        cv::Mat crop = currentFrame(rect);
-        cv::Mat gray;
-        if (crop.channels() == 1)
-        {
-            gray = crop.clone(); // deep copy since we store it long-term
-        }
-        else if (crop.channels() == 4)
-        {
-            cv::cvtColor(crop, gray, cv::COLOR_BGRA2GRAY);
-        }
-        else
-        {
-            cv::cvtColor(crop, gray, cv::COLOR_BGR2GRAY);
-        }
+        // Crop and clone to store long-term
+        cv::Mat gray = currentFrameGray(rect).clone();
         m_lastGrays.push_back(std::move(gray));
     }
 }

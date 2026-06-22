@@ -1,4 +1,5 @@
 #include "src/capture/DxgiCaptureEngine.h"
+#include "src/utils/FrameBufferPool.h"
 #include <algorithm>
 #include <cstring>
 
@@ -259,7 +260,7 @@ bool DxgiCaptureEngine::ProcessFrame(IDXGIResource* resource)
     frame.width     = roiW;
     frame.height    = roiH;
     frame.timestamp = GetTickCount64();
-    frame.data.resize(static_cast<size_t>(roiW) * roiH * 4);
+    frame.data      = FrameBufferPool::Instance().Acquire(static_cast<size_t>(roiW) * roiH * 4);
 
     // Copy rows individually (RowPitch may include padding)
     const auto* src = static_cast<const uint8_t*>(mapped.pData);

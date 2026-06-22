@@ -146,10 +146,18 @@ bool BaseHttpTranslateProvider::SendHttpRequest(
         DWORD available = 0;
         while (WinHttpQueryDataAvailable(hReq, &available) && available > 0)
         {
-            std::string chunk(available, '\0');
+            size_t oldSize = response.size();
+            response.resize(oldSize + available);
             DWORD read = 0;
-            WinHttpReadData(hReq, chunk.data(), available, &read);
-            response.append(chunk.data(), read);
+            if (WinHttpReadData(hReq, &response[oldSize], available, &read))
+            {
+                response.resize(oldSize + read);
+            }
+            else
+            {
+                response.resize(oldSize);
+                break;
+            }
         }
 
         WinHttpCloseHandle(hReq);

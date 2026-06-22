@@ -4,6 +4,7 @@
 #include "src/utils/StringUtils.h"
 #include "src/ui/ITranslationOutput.h"
 #include "src/ocr/OcrFactory.h"
+#include "src/utils/FrameBufferPool.h"
 #include <opencv2/imgproc.hpp>
 #include <chrono>
 
@@ -335,6 +336,9 @@ void TranslationPipeline::OcrProc()
                 }
             }
         }
+
+        // Release buffer back to pool to avoid memory allocation next time
+        FrameBufferPool::Instance().Release(std::move(pending.frame.data));
 
         m_ocrBusy.store(false);
     }

@@ -73,7 +73,7 @@ public:
     HWND GetHWND() const { return m_hwnd; }
 
 private:
-    static void PremultiplyAlpha(void* pvBits, int width, int height) noexcept;
+    static void PremultiplyAlpha(void* pvBits, int width, int height, const RECT& rect) noexcept;
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
     LRESULT HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam);
 
@@ -88,6 +88,13 @@ private:
     int m_posY   = 100;
     int m_width  = 700;
     int m_height = 160;
+
+    // ── GDI Cache ─────────────────────────────────────────────────────────────
+    HDC     m_cachedMemDC  = nullptr;
+    HBITMAP m_cachedBmp    = nullptr;
+    void*   m_cachedBits   = nullptr;
+    int     m_cachedWidth  = 0;
+    int     m_cachedHeight = 0;
 
     // ── Appearance ────────────────────────────────────────────────────────────
     std::wstring m_fontName      = L"Segoe UI";
