@@ -5,6 +5,7 @@
 #include "src/ui/ITranslationOutput.h"
 #include "src/ocr/OcrFactory.h"
 #include <opencv2/imgproc.hpp>
+#include <chrono>
 
 #ifndef CREATE_WAITABLE_TIMER_MANUAL_RESET
 #  define CREATE_WAITABLE_TIMER_MANUAL_RESET    0x00000001UL
@@ -19,8 +20,6 @@ TranslationPipeline::~TranslationPipeline()
 {
     Stop();
 }
-
-#include <chrono>
 
 void TranslationPipeline::SetComponents(ICaptureEngine* capture,
                                          ITranslateProvider* client,
@@ -50,6 +49,7 @@ bool TranslationPipeline::Start(int intervalMs)
     if (m_running.load()) return true;
 
     m_lastOCRText.clear();
+    m_lastTranslationResult.clear();
     m_translationHistory.clear();
     m_lastTranslateTime = 0;
     m_lastSeenTime = 0;
@@ -80,7 +80,9 @@ bool TranslationPipeline::Start(int intervalMs)
         m_overlay->SetSize(capRect.right - capRect.left, capRect.bottom - capRect.top);
     }
 
+    m_ocrBusy.store(false);
     m_networkThread   = std::thread(&TranslationPipeline::NetworkProc,   this);
+    m_ocrThread       = std::thread(&TranslationPipeline::OcrProc,       this);
     m_schedulerThread = std::thread(&TranslationPipeline::SchedulerProc, this);
 
     return true;
@@ -99,14 +101,22 @@ void TranslationPipeline::Stop()
     }
     m_schedulerCV.notify_all();
 
-    // Wake up network queue consumer thread
+    // Wake up OCR thread
     {
-        std::lock_guard<std::mutex> lk(m_queueMutex);
-        m_pending.reset();
+        std::lock_guard<std::mutex> lk(m_ocrMutex);
+        m_pendingOcr.reset();
     }
-    m_queueCV.notify_all();
+    m_ocrCV.notify_all();
+
+    // Wake up Network thread
+    {
+        std::lock_guard<std::mutex> lk(m_translateMutex);
+        m_pendingTranslate.reset();
+    }
+    m_translateCV.notify_all();
 
     if (m_schedulerThread.joinable()) m_schedulerThread.join();
+    if (m_ocrThread.joinable())       m_ocrThread.join();
     if (m_networkThread.joinable())   m_networkThread.join();
 
     m_running.store(false);
@@ -178,10 +188,10 @@ void TranslationPipeline::SchedulerProc()
 
         if (m_paused.load()) continue;
 
-        // Drop the capture tick if network thread is currently busy
-        if (m_networkBusy.load())
+        // Drop the capture tick if OCR thread is currently busy
+        if (m_ocrBusy.load())
         {
-            if (OnStatus) OnStatus(L"Skipped capture tick (network busy)");
+            if (OnStatus) OnStatus(L"Skipped capture tick (OCR busy)");
             continue;
         }
 
@@ -192,7 +202,7 @@ void TranslationPipeline::SchedulerProc()
 
         // Push frame to the single-slot queue (Zero-copy implementation)
         {
-            std::lock_guard<std::mutex> lk(m_queueMutex);
+            std::lock_guard<std::mutex> lk(m_ocrMutex);
             PendingFrame pending;
             pending.frame = std::move(frame);
 
@@ -207,82 +217,232 @@ void TranslationPipeline::SchedulerProc()
             {
                 pending.frameMat = cv::Mat(pending.frame.height, pending.frame.width, CV_8UC4, pending.frame.data.data());
             }
-            m_pending = std::move(pending);
+            m_pendingOcr = std::move(pending);
         }
-        m_queueCV.notify_one();
+        m_ocrCV.notify_one();
 
-        if (OnStatus) OnStatus(L"Frame queued for processing...");
+        if (OnStatus) OnStatus(L"Frame queued for OCR...");
     }
 }
 
-void TranslationPipeline::NetworkProc()
+void TranslationPipeline::OcrProc()
 {
+    if (OnStatus) OnStatus(L"OCR worker thread started.");
+
     while (true)
     {
         PendingFrame pending;
 
         {
-            std::unique_lock<std::mutex> lk(m_queueMutex);
-            m_queueCV.wait(lk, [&]
+            std::unique_lock<std::mutex> lk(m_ocrMutex);
+            m_ocrCV.wait(lk, [&]
             {
-                return m_pending.has_value() || m_shouldStop.load();
+                return m_pendingOcr.has_value() || m_shouldStop.load();
             });
 
-            if (m_shouldStop.load() && !m_pending.has_value())
+            if (m_shouldStop.load() && !m_pendingOcr.has_value())
                 break;
 
-            if (!m_pending.has_value()) continue;
+            if (!m_pendingOcr.has_value()) continue;
 
-            pending = std::move(*m_pending);
-            m_pending.reset();
+            pending = std::move(*m_pendingOcr);
+            m_pendingOcr.reset();
         }
 
-        m_networkBusy.store(true);
-        ProcessPendingFrame(std::move(pending.frameMat));
-        m_networkBusy.store(false);
+        m_ocrBusy.store(true);
+
+        if (InitializeOcrEngine())
+        {
+            cv::Mat preparedFrame = m_ocrEngine->PrepareFrame(pending.frameMat);
+            OcrResult ocrResult;
+            bool hasText = PerformOcr(preparedFrame, ocrResult);
+
+            if (!hasText || ocrResult.empty())
+            {
+                m_boxDiffDetector.Reset();
+                ULONGLONG now = GetTickCount64();
+                ULONGLONG limit = static_cast<ULONGLONG>(m_intervalMs.load()) + 1000;
+                if (now - m_lastSeenTime > limit)
+                {
+                    m_translationHistory.clear();
+                    m_lastOCRText.clear();
+                    m_lastTranslationResult.clear();
+                    m_lastBoxes.clear();
+                    if (m_overlay)
+                    {
+                        if (m_displayMode == DisplayMode::InPlace)
+                            m_overlay->SetInPlaceText(L"", {});
+                        else
+                            m_overlay->SetText(L"");
+                    }
+                    if (OnStatus) OnStatus(L"Screen cleared (no text detected + timeout)");
+                }
+                else
+                {
+                    if (OnStatus) OnStatus(L"No text detected, keeping overlay (timeout pending)");
+                }
+            }
+            else
+            {
+                m_lastSeenTime = GetTickCount64();
+                std::wstring ocrText = Utf8ToWide(ocrResult.ConcatText());
+
+                if (!ocrText.empty())
+                {
+                    if (ocrText == m_lastOCRText)
+                    {
+                        if (OnStatus) OnStatus(L"OCR text unchanged.");
+
+                        // Update boxes position immediately if text is same but coordinates shifted
+                        if (m_displayMode == DisplayMode::InPlace && m_overlay && !m_lastTranslationResult.empty())
+                        {
+                            double factor = m_scaleRoi.load() / 100.0;
+                            double invFactor = (factor > 0.0) ? (1.0 / factor) : 1.0;
+
+                            std::vector<std::vector<Point2F>> overlayBoxes;
+                            overlayBoxes.reserve(m_lastBoxes.size());
+                            for (const auto& box : m_lastBoxes)
+                            {
+                                std::vector<Point2F> overlayBox;
+                                overlayBox.reserve(box.size());
+                                for (const auto& pt : box)
+                                {
+                                    overlayBox.push_back({
+                                        static_cast<float>(pt.x * invFactor),
+                                        static_cast<float>(pt.y * invFactor)
+                                    });
+                                }
+                                overlayBoxes.push_back(std::move(overlayBox));
+                            }
+                            m_overlay->SetInPlaceText(m_lastTranslationResult, overlayBoxes);
+                        }
+                    }
+                    else
+                    {
+                        m_lastOCRText = ocrText;
+                        if (OnStatus) OnStatus(L"New OCR text detected. Queueing translation...");
+
+                        // Queue to translation thread
+                        {
+                            std::lock_guard<std::mutex> lk(m_translateMutex);
+                            PendingTranslate req;
+                            req.text = ocrText;
+                            req.boxes = m_lastBoxes;
+                            m_pendingTranslate = std::move(req);
+                        }
+                        m_translateCV.notify_one();
+                    }
+                }
+            }
+        }
+
+        m_ocrBusy.store(false);
     }
 }
 
-void TranslationPipeline::ProcessPendingFrame(cv::Mat frameMat)
+void TranslationPipeline::NetworkProc()
 {
-    if (!InitializeOcrEngine())
+    if (OnStatus) OnStatus(L"Translation network worker started.");
+
+    while (true)
     {
-        return;
-    }
+        PendingTranslate req;
 
-    cv::Mat preparedFrame = m_ocrEngine->PrepareFrame(frameMat);
-
-    OcrResult ocrResult;
-    bool hasText = PerformOcr(preparedFrame, ocrResult);
-
-    if (!hasText || ocrResult.empty())
-    {
-        // Cleanup overlay display if text is missing and timeout is exceeded
-        m_boxDiffDetector.Reset();
-        ULONGLONG now = GetTickCount64();
-        ULONGLONG limit = static_cast<ULONGLONG>(m_intervalMs.load()) + 1000;
-        if (now - m_lastSeenTime > limit)
         {
-            m_translationHistory.clear();
-            m_lastOCRText.clear();
-            m_lastBoxes.clear();
-            if (m_overlay)
+            std::unique_lock<std::mutex> lk(m_translateMutex);
+            m_translateCV.wait(lk, [&]
             {
-                if (m_displayMode == DisplayMode::InPlace)
-                    m_overlay->SetInPlaceText(L"", {});
-                else
-                    m_overlay->SetText(L"");
-            }
-            if (OnStatus) OnStatus(L"Screen cleared (no text detected + timeout)");
-        }
-        else
-        {
-            if (OnStatus) OnStatus(L"No text detected, keeping overlay (timeout pending)");
-        }
-        return;
-    }
+                return m_pendingTranslate.has_value() || m_shouldStop.load();
+            });
 
-    TranslateAndShow(ocrResult);
+            if (m_shouldStop.load() && !m_pendingTranslate.has_value())
+                break;
+
+            if (!m_pendingTranslate.has_value()) continue;
+
+            req = std::move(*m_pendingTranslate);
+            m_pendingTranslate.reset();
+        }
+
+        if (!m_client) continue;
+
+        if (OnStatus) OnStatus(L"Translating: " + req.text);
+
+        try
+        {
+            std::wstring result = m_client->Translate(req.text);
+            if (!result.empty())
+            {
+                m_lastTranslationResult = result;
+
+                ULONGLONG now = GetTickCount64();
+                ULONGLONG limit = static_cast<ULONGLONG>(m_intervalMs.load()) + 1000;
+
+                if (m_lastTranslateTime > 0 && (now - m_lastTranslateTime > limit))
+                {
+                    m_translationHistory.clear();
+                }
+                m_lastTranslateTime = now;
+
+                m_translationHistory.push_back(result);
+                if (m_translationHistory.size() > 3)
+                {
+                    m_translationHistory.erase(m_translationHistory.begin());
+                }
+
+                std::wstring joinedText;
+                for (size_t i = 0; i < m_translationHistory.size(); ++i)
+                {
+                    if (i > 0) joinedText += L"\n";
+                    joinedText += m_translationHistory[i];
+                }
+
+                if (m_overlay)
+                {
+                    if (m_displayMode == DisplayMode::InPlace)
+                    {
+                        // Scale coordinates back to original frame ROI size
+                        double factor = m_scaleRoi.load() / 100.0;
+                        double invFactor = (factor > 0.0) ? (1.0 / factor) : 1.0;
+
+                        std::vector<std::vector<Point2F>> overlayBoxes;
+                        overlayBoxes.reserve(req.boxes.size());
+                        for (const auto& box : req.boxes)
+                        {
+                            std::vector<Point2F> overlayBox;
+                            overlayBox.reserve(box.size());
+                            for (const auto& pt : box)
+                            {
+                                overlayBox.push_back({
+                                    static_cast<float>(pt.x * invFactor),
+                                    static_cast<float>(pt.y * invFactor)
+                                });
+                            }
+                            overlayBoxes.push_back(std::move(overlayBox));
+                        }
+                        m_overlay->SetInPlaceText(result, overlayBoxes);
+                    }
+                    else
+                    {
+                        m_overlay->SetText(joinedText);
+                    }
+                }
+                if (OnStatus) OnStatus(L"OK: " + result);
+            }
+            else
+            {
+                if (OnStatus) OnStatus(L"API error: " + m_client->GetLastError());
+            }
+        }
+        catch (const std::exception& e)
+        {
+            if (OnStatus) OnStatus(L"Translation Exception: " + Utf8ToWide(e.what()));
+        }
+        catch (...)
+        {
+            if (OnStatus) OnStatus(L"Translation Unknown Exception occurred.");
+        }
+    }
 }
 
 bool TranslationPipeline::InitializeOcrEngine()
@@ -462,104 +622,5 @@ bool TranslationPipeline::PerformOcr(const cv::Mat& frameMat, OcrResult& outOcrR
     {
         if (OnStatus) OnStatus(L"OCR Processing Unknown Exception occurred.");
         return false;
-    }
-}
-
-void TranslationPipeline::TranslateAndShow(const OcrResult& ocrResult)
-{
-    m_lastSeenTime = GetTickCount64();
-    std::wstring ocrText = Utf8ToWide(ocrResult.ConcatText());
-
-    if (ocrText.empty())
-    {
-        return;
-    }
-
-    if (ocrText == m_lastOCRText)
-    {
-        if (OnStatus) OnStatus(L"Skipped translation (OCR text unchanged)");
-        return;
-    }
-
-    m_lastOCRText = ocrText;
-
-    if (!m_client)
-    {
-        return;
-    }
-
-    if (OnStatus) OnStatus(L"Translating: " + ocrText);
-    
-    try
-    {
-        std::wstring result = m_client->Translate(ocrText);
-        if (!result.empty())
-        {
-            ULONGLONG now = GetTickCount64();
-            ULONGLONG limit = static_cast<ULONGLONG>(m_intervalMs.load()) + 1000;
-
-            if (m_lastTranslateTime > 0 && (now - m_lastTranslateTime > limit))
-            {
-                m_translationHistory.clear();
-            }
-            m_lastTranslateTime = now;
-
-            m_translationHistory.push_back(result);
-            if (m_translationHistory.size() > 3)
-            {
-                m_translationHistory.erase(m_translationHistory.begin());
-            }
-
-            std::wstring joinedText;
-            for (size_t i = 0; i < m_translationHistory.size(); ++i)
-            {
-                if (i > 0) joinedText += L"\n";
-                joinedText += m_translationHistory[i];
-            }
-
-            if (m_overlay)
-            {
-                if (m_displayMode == DisplayMode::InPlace)
-                {
-                    // Scale coordinates back to original frame ROI size
-                    double factor = m_scaleRoi.load() / 100.0;
-                    double invFactor = (factor > 0.0) ? (1.0 / factor) : 1.0;
-
-                    std::vector<std::vector<Point2F>> overlayBoxes;
-                    overlayBoxes.reserve(m_lastBoxes.size());
-                    for (const auto& box : m_lastBoxes)
-                    {
-                        std::vector<Point2F> overlayBox;
-                        overlayBox.reserve(box.size());
-                        for (const auto& pt : box)
-                        {
-                            overlayBox.push_back({
-                                static_cast<float>(pt.x * invFactor),
-                                static_cast<float>(pt.y * invFactor)
-                            });
-                        }
-                        overlayBoxes.push_back(std::move(overlayBox));
-                    }
-                    m_overlay->SetInPlaceText(result, overlayBoxes);
-                }
-                else
-                {
-                    m_overlay->SetText(joinedText);
-                }
-            }
-            if (OnStatus)  OnStatus(L"OK: " + result);
-        }
-        else
-        {
-            if (OnStatus) OnStatus(L"API error: " + m_client->GetLastError());
-        }
-    }
-    catch (const std::exception& e)
-    {
-        if (OnStatus) OnStatus(L"Translation Exception: " + Utf8ToWide(e.what()));
-    }
-    catch (...)
-    {
-        if (OnStatus) OnStatus(L"Translation Unknown Exception occurred.");
     }
 }

@@ -55,7 +55,10 @@ private:
     std::unique_ptr<ICaptureEngine>     m_capture;
     std::unique_ptr<ITranslateProvider> m_client;
     std::unique_ptr<IOcrEngine>         m_regionOcr;
+    std::unique_ptr<ITranslateProvider> m_regionClient;
+    TranslateProvider                   m_regionClientType = static_cast<TranslateProvider>(-1);
     TranslationPipeline                 m_pipeline;
     bool                                m_running = false;
     std::wstring                        m_lastError;
+    TranslateProvider                   m_clientType = static_cast<TranslateProvider>(-1);
 };

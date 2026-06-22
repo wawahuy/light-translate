@@ -64,25 +64,25 @@ public:
 
 private:
     void SchedulerProc();
+    void OcrProc();
     void NetworkProc();
 
-    // Internal helpers to reduce NetworkProc nesting and complexity
-    void ProcessPendingFrame(cv::Mat frameMat);
+    // Internal helpers
     bool InitializeOcrEngine();
     bool PerformOcr(const cv::Mat& frameMat, OcrResult& outOcrResult);
-    void TranslateAndShow(const OcrResult& ocrResult);
 
     ICaptureEngine*      m_capture = nullptr;
     ITranslateProvider*  m_client = nullptr;
     ITranslationOutput*  m_overlay = nullptr;
 
     std::thread          m_schedulerThread;
+    std::thread          m_ocrThread;
     std::thread          m_networkThread;
     std::atomic<bool>    m_running{ false };
     std::atomic<bool>    m_shouldStop{ false };
     std::atomic<bool>    m_paused{ false };
 
-    // Standard Concurrency primitives for scheduler
+    // Scheduler synchronization
     std::mutex              m_schedulerMutex;
     std::condition_variable m_schedulerCV;
     bool                    m_schedulerTriggered = false;
@@ -91,16 +91,24 @@ private:
     std::atomic<int>     m_scaleRoi{ 100 };
     DisplayMode          m_displayMode = DisplayMode::InPlace;
 
-    // Single-slot frame queue
+    // OCR Queue (Single-slot)
     struct PendingFrame {
         Frame frame;
         cv::Mat frameMat;
     };
-    std::optional<PendingFrame> m_pending;
-    std::mutex                  m_queueMutex;
-    std::condition_variable     m_queueCV;
+    std::optional<PendingFrame> m_pendingOcr;
+    std::mutex                  m_ocrMutex;
+    std::condition_variable     m_ocrCV;
+    std::atomic<bool>           m_ocrBusy{ false };
 
-    std::atomic<bool>    m_networkBusy{ false };
+    // Translation Queue (Single-slot)
+    struct PendingTranslate {
+        std::wstring text;
+        std::vector<std::vector<cv::Point2f>> boxes;
+    };
+    std::optional<PendingTranslate> m_pendingTranslate;
+    std::mutex                      m_translateMutex;
+    std::condition_variable         m_translateCV;
 
     // OCR configuration & engine
     OcrType              m_ocrType = OcrType::PaddleOCR;
@@ -111,6 +119,7 @@ private:
 
     // History and caching
     std::wstring         m_lastOCRText;
+    std::wstring         m_lastTranslationResult;
     std::vector<std::wstring> m_translationHistory;
     std::vector<std::vector<cv::Point2f>> m_lastBoxes;
     ULONGLONG            m_lastTranslateTime = 0;

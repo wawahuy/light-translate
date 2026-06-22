@@ -53,6 +53,7 @@ bool AppController::Start(HWND hwndOwner, ITranslationOutput* overlay)
 
     // 2. Initialize translation provider
     m_client = TranslateProviderFactory::CreateProvider(m_config.providerType);
+    m_clientType = m_config.providerType;
     if (m_client)
     {
         m_client->SetApiKey(m_config.apiKey);
@@ -114,6 +115,9 @@ void AppController::Stop()
     }
 
     m_client.reset();
+    m_clientType = static_cast<TranslateProvider>(-1);
+    m_regionClient.reset();
+    m_regionClientType = static_cast<TranslateProvider>(-1);
     m_running = false;
 }
 
@@ -191,20 +195,24 @@ std::wstring AppController::PerformRegionCaptureAndTranslate(const cv::Mat& regi
     }
 
     if (OnStatus) OnStatus(L"Translating: " + outOcrText);
-    auto client = TranslateProviderFactory::CreateProvider(m_config.providerType);
-    if (!client)
+    if (!m_regionClient || m_regionClientType != m_config.providerType)
+    {
+        m_regionClient = TranslateProviderFactory::CreateProvider(m_config.providerType);
+        m_regionClientType = m_config.providerType;
+    }
+    if (!m_regionClient)
     {
         if (OnStatus) OnStatus(L"Translation API error: Invalid provider.");
         return L"";
     }
-    client->SetApiKey(m_config.apiKey);
-    client->SetApiModel(m_config.apiModel);
-    client->SetTargetLanguage(m_config.targetLanguage);
+    m_regionClient->SetApiKey(m_config.apiKey);
+    m_regionClient->SetApiModel(m_config.apiModel);
+    m_regionClient->SetTargetLanguage(m_config.targetLanguage);
 
-    std::wstring result = client->Translate(outOcrText);
+    std::wstring result = m_regionClient->Translate(outOcrText);
     if (result.empty())
     {
-        if (OnStatus) OnStatus(L"Translation API error: " + client->GetLastError());
+        if (OnStatus) OnStatus(L"Translation API error: " + m_regionClient->GetLastError());
         return L"";
     }
 
