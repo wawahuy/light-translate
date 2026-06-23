@@ -1,7 +1,7 @@
 #pragma once
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#include <commctrl.h>
+#include <d3d11.h>
 #include <memory>
 #include <string>
 #include <vector>
@@ -12,7 +12,7 @@
 #include "src/ui/RegionResultWindow.h"
 #include "src/AppController.h"
 
-/// The main application window that hosts all settings controls.
+/// The main application window that hosts the ImGui settings controls.
 /// Also owns the system tray icon when minimised.
 class SettingsWindow
 {
@@ -22,7 +22,7 @@ public:
 
     bool Create(HINSTANCE hInstance);
 
-    /// Enter the Windows message loop (returns when WM_QUIT is received).
+    /// Enter the Windows message loop and render loop.
     int  RunMessageLoop();
 
     HWND GetHWND() const { return m_hwnd; }
@@ -32,31 +32,22 @@ private:
     static LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
     LRESULT HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam);
 
-    // -- WM_CREATE helpers -----------------------------------------------------
-    void CreateControls();
-    void CreateRealtimeTab(int x, int y, int w);
-    void CreateTranslateTab(int x, int y, int w);
-    void CreateSystemTab(int x, int y, int w);
-    void CreateRegionTab(int x, int y, int w);
-    HWND MakeLabel (int x, int y, int w, int h, const wchar_t* txt, UINT id = -1);
-    HWND MakeEdit  (int x, int y, int w, int h, UINT id, bool multiLine = false);
-    HWND MakeButton(int x, int y, int w, int h, const wchar_t* txt, UINT id);
-    HWND MakeCheck (int x, int y, int w, int h, const wchar_t* txt, UINT id);
-    HWND MakeCombo (int x, int y, int w, int h, UINT id);
-    HWND MakeGroup (int x, int y, int w, int h, const wchar_t* txt);
+    // -- D3D11 Helpers ---------------------------------------------------------
+    bool CreateDeviceD3D(HWND hWnd);
+    void CleanupDeviceD3D();
+    void CreateRenderTarget();
+    void CleanupRenderTarget();
 
-    // -- Tab management --------------------------------------------------------
-    void OnTabChanged();
-    void ShowTab(int index);
+    // -- ImGui Rendering -------------------------------------------------------
+    void RenderFrame();
+    void RenderUI();
+    void ApplyImGuiStyle();
+    void LoadFonts();
 
-    // -- Capture mode ----------------------------------------------------------
+    // -- Capture mode & Display changes ----------------------------------------
     void OnCaptureModeChanged();
-    void UpdateCaptureModeUI();
     void OnDisplayModeChanged();
-    void UpdateDisplayModeUI();
-    void UpdateProviderUI();
-    void UpdateRoiUI();
-    void UpdateRoiLabel();
+    void OnRoiActiveChanged();
 
     // -- Command handlers ------------------------------------------------------
     void OnStart();
@@ -65,16 +56,12 @@ private:
     void OnTestApi();
     void OnToggleDrag();
     void OnProviderChanged();
-    void OnRoiActiveChanged();
     void OnSave();
-    void OnTextColorPick();
-    void OnShadowColorPick(bool shadow);
-    void OnColorPick(COLORREF& colorRef);
 
     // -- Config <-> UI ---------------------------------------------------------
     void ConfigToUI();
     void UIToConfig();
-    void UpdateRegionLabel();
+    std::wstring GetRegionInfoText() const;
     void UpdateStatus(const std::wstring& text);
     void SyncHelperWindows();
 
@@ -92,7 +79,6 @@ private:
     static const int HOTKEY_PAUSE_ID = 2;
     static const int HOTKEY_TOGGLE_WND_ID = 3;
     static const int HOTKEY_REGION_ID = 4;
-    static LRESULT CALLBACK HotkeyEditSubclassProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
 
     // -- Region selection ------------------------------------------------------
     void OnRegionHotkeyPressed();
@@ -118,18 +104,31 @@ private:
     bool        m_toggleWndHotkeyRegistered = false;
     bool        m_regionHotkeyRegistered = false;
 
-    // Tab control
-    HWND                  m_tabCtrl = nullptr;
-    int                   m_currentTab = 0;
-    std::vector<HWND>     m_realtimeControls;    ///< Controls on "Realtime" tab
-    std::vector<HWND>     m_translateControls;   ///< Controls on "Translate" tab
-    std::vector<HWND>     m_systemControls;      ///< Controls on "System" tab
-    std::vector<HWND>     m_regionControls;      ///< Controls on "Region" tab
+    // D3D11 objects
+    ID3D11Device*            m_pd3dDevice = nullptr;
+    ID3D11DeviceContext*     m_pd3dDeviceContext = nullptr;
+    IDXGISwapChain*          m_pSwapChain = nullptr;
+    ID3D11RenderTargetView*  m_mainRenderTargetView = nullptr;
+    bool                     m_SwapChainOccluded = false;
 
-    // Capture mode sub-controls (conditionally shown within Realtime tab)
-    std::vector<HWND>     m_autoModeControls;    ///< Interval edit (Auto mode)
-    std::vector<HWND>     m_hotkeyModeControls;  ///< Hotkey edit (Hotkey mode)
-    std::vector<HWND>     m_overlayPosControls;  ///< Position controls (Overlay mode)
+    // ImGui state
+    int                   m_currentTab = 0;
+    int                   m_recordingHotkeyType = 0; // 0: None, 1: Capture, 2: Pause, 3: Toggle, 4: Region
+    float                 m_dpiScale = 1.0f;
+
+    // Buffers for text inputs
+    char                  m_apiModelBuf[256] = "";
+    char                  m_apiKeyBuf[256] = "";
+    char                  m_fontNameBuf[256] = "";
+
+    // Color states (temp floats for ColorPicker)
+    float                 m_textColorFloat[3] = {1.0f, 1.0f, 1.0f};
+    float                 m_shadowColorFloat[3] = {0.0f, 0.0f, 0.0f};
+    float                 m_strokeColorFloat[3] = {0.0f, 0.0f, 0.0f};
+
+    // Log list
+    std::vector<std::wstring> m_logs;
+    bool                  m_scrollToBottom = false;
 
     AppConfig        m_config;
     OverlayWindow    m_overlay;
@@ -139,6 +138,6 @@ private:
     std::unique_ptr<AppController> m_controller;
 
     static constexpr wchar_t CLASS_NAME[] = L"GameTranslate_SettingsWnd";
-    static constexpr int WND_W = 560;
+    static constexpr int WND_W = 720;
     static constexpr int WND_H = 850;
 };

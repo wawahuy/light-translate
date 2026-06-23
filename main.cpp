@@ -44,16 +44,11 @@ int WINAPI wWinMain(
     ShowWindow(settingsWnd.GetHWND(), nShowCmd);
     UpdateWindow(settingsWnd.GetHWND());
 
-    // -- Message loop ----------------------------------------------------------
-    MSG msg{};
-    while (GetMessageW(&msg, nullptr, 0, 0) > 0)
-    {
-        TranslateMessage(&msg);
-        DispatchMessageW(&msg);
-    }
+    // -- Message & Render loop -------------------------------------------------
+    int result = settingsWnd.RunMessageLoop();
 
     // Cleanup
     ShutdownGDIPlus(gdiplusToken);
 
-    return static_cast<int>(msg.wParam);
+    return result;
 }

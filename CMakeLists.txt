@@ -217,6 +217,8 @@ endfunction()
 add_subdirectory(third_party/abseil-cpp)
 add_subdirectory(third_party/clipper_ver6.4.2/cpp)
 include_directories(${POLYCLIPPING_INCLUDE_DIR})
+include_directories("${CMAKE_SOURCE_DIR}/third_party/imgui-1.92.8")
+include_directories("${CMAKE_SOURCE_DIR}/third_party/imgui-1.92.8/backends")
 
 set(DEPS ${DEPS} ${OpenCV_LIBS})
 set(DEPS ${DEPS} absl::statusor)
@@ -238,7 +240,17 @@ file(GLOB_RECURSE SRC_LIST
   "./src/*.cpp"
 ) 
 set(SRCS main.cpp)
-add_executable(${APP_NAME} WIN32 ${SRCS} ${SRC_LIST} ${HEADER_LIST})
+
+set(IMGUI_SRC_LIST
+  "${CMAKE_SOURCE_DIR}/third_party/imgui-1.92.8/imgui.cpp"
+  "${CMAKE_SOURCE_DIR}/third_party/imgui-1.92.8/imgui_draw.cpp"
+  "${CMAKE_SOURCE_DIR}/third_party/imgui-1.92.8/imgui_tables.cpp"
+  "${CMAKE_SOURCE_DIR}/third_party/imgui-1.92.8/imgui_widgets.cpp"
+  "${CMAKE_SOURCE_DIR}/third_party/imgui-1.92.8/backends/imgui_impl_win32.cpp"
+  "${CMAKE_SOURCE_DIR}/third_party/imgui-1.92.8/backends/imgui_impl_dx11.cpp"
+)
+
+add_executable(${APP_NAME} WIN32 ${SRCS} ${SRC_LIST} ${HEADER_LIST} ${IMGUI_SRC_LIST})
 target_link_libraries(${APP_NAME} ${DEPS}
   user32
   gdi32
@@ -248,6 +260,8 @@ target_link_libraries(${APP_NAME} ${DEPS}
   winhttp
   winmm
   windowsapp
+  d3d11
+  dxgi
 )
 target_compile_definitions(${APP_NAME} PRIVATE
   UNICODE

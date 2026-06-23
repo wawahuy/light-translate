@@ -5,13 +5,17 @@
 #include "src/ocr/OcrFactory.h"
 #include "src/network/TranslateProviderFactory.h"
 #include <shellapi.h>
-#include <commctrl.h>
 #include <commdlg.h>
 #include <shlobj.h>
 #include <string>
 #include <cwchar>
 #include <thread>
+#include <windowsx.h>
 #include <opencv2/imgproc.hpp>
+
+#include "imgui.h"
+#include "imgui_impl_win32.h"
+#include "imgui_impl_dx11.h"
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "comdlg32.lib")
@@ -23,6 +27,26 @@ struct RegionResultData
 };
 
 constexpr wchar_t SettingsWindow::CLASS_NAME[];
+
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
+namespace {
+    COLORREF FloatToColorref(const float in[3])
+    {
+        return RGB(
+            static_cast<BYTE>(in[0] * 255.0f),
+            static_cast<BYTE>(in[1] * 255.0f),
+            static_cast<BYTE>(in[2] * 255.0f)
+        );
+    }
+
+    void ColorrefToFloat(COLORREF cr, float out[3])
+    {
+        out[0] = static_cast<float>(GetRValue(cr)) / 255.0f;
+        out[1] = static_cast<float>(GetGValue(cr)) / 255.0f;
+        out[2] = static_cast<float>(GetBValue(cr)) / 255.0f;
+    }
+}
 
 // -----------------------------------------------------------------------------
 //  Constructor / Destructor
@@ -36,6 +60,14 @@ SettingsWindow::~SettingsWindow()
     UnregisterToggleWndHotkey();
     UnregisterRegionHotkey();
     RemoveTrayIcon();
+
+    if (ImGui::GetCurrentContext())
+    {
+        ImGui_ImplDX11_Shutdown();
+        ImGui_ImplWin32_Shutdown();
+        ImGui::DestroyContext();
+    }
+    CleanupDeviceD3D();
 }
 
 // -----------------------------------------------------------------------------
@@ -52,7 +84,7 @@ bool SettingsWindow::Create(HINSTANCE hInstance)
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInstance;
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-    wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_BTNFACE + 1);
+    wc.hbrBackground = nullptr;
     wc.lpszClassName = CLASS_NAME;
     wc.hIcon = LoadIconW(hInstance, MAKEINTRESOURCE(IDI_APP_ICON));
     if (!wc.hIcon) wc.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
@@ -60,21 +92,131 @@ bool SettingsWindow::Create(HINSTANCE hInstance)
 
     if (!RegisterClassExW(&wc)) return false;
 
+    // Load persisted config
+    m_config.Load(GetIniPath());
+
+    // Initialize capture helper window
+    m_captureHelper.Create(m_hInstance);
+    m_captureHelper.SetRect(m_config.captureRect);
+    m_captureHelper.OnRectChanged = [&](const RECT& rc)
+        {
+            m_config.captureRect = rc;
+            m_config.captureSet = true;
+        };
+    m_captureHelper.OnRoiRectChanged = [&](const RECT& rc)
+        {
+            m_config.roiRect = rc;
+        };
+
+    // Initialise Overlay window
+    m_overlay.Create(m_hInstance);
+    m_overlay.SetPosition(m_config.overlayPos.x, m_config.overlayPos.y);
+    m_overlay.SetSize(m_config.overlayWidth, m_config.overlayHeight);
+    m_overlay.OnMoved = [&](int x, int y)
+        {
+            if (m_config.displayMode != DisplayMode::InPlace)
+            {
+                m_config.overlayPos = { x, y };
+                int w, h;
+                m_overlay.GetSize(w, h);
+                m_config.overlayWidth = w;
+                m_config.overlayHeight = h;
+            }
+        };
+
+    // Initialize region selection + result windows
+    m_regionSelect.Create(m_hInstance);
+    m_regionSelect.OnRegionSelected = [&](const RECT& rc)
+        {
+            m_regionResult.SetFontName(m_config.fontName);
+            m_regionResult.SetFontSize(m_config.fontSize);
+            m_regionResult.ShowResult(rc, L"");
+
+            std::thread([this, rc]() {
+                PerformRegionCapture(rc);
+            }).detach();
+        };
+    m_regionResult.Create(m_hInstance);
+
+    // Controller status callback
+    m_controller->OnStatus = [&](const std::wstring& s)
+        {
+            wchar_t* buf = new wchar_t[s.size() + 1];
+            std::wmemcpy(buf, s.c_str(), s.size() + 1);
+            PostMessageW(m_hwnd, WM_UPDATE_STATUS, 0, reinterpret_cast<LPARAM>(buf));
+        };
+
+    // Calculate DPI scale
+    m_dpiScale = 1.0f;
+    HMODULE hUser32 = GetModuleHandleW(L"user32.dll");
+    if (hUser32)
+    {
+        auto pGetDpiForSystem = (UINT(WINAPI*)())GetProcAddress(hUser32, "GetDpiForSystem");
+        if (pGetDpiForSystem)
+        {
+            m_dpiScale = static_cast<float>(pGetDpiForSystem()) / 96.0f;
+        }
+    }
+
+    int width = static_cast<int>(WND_W * m_dpiScale);
+    int height = static_cast<int>(WND_H * m_dpiScale);
+
     // Compute centred position
     int sx = GetSystemMetrics(SM_CXSCREEN);
     int sy = GetSystemMetrics(SM_CYSCREEN);
 
     m_hwnd = CreateWindowExW(
-        WS_EX_APPWINDOW | WS_EX_TOPMOST,
+        WS_EX_APPWINDOW,
         CLASS_NAME,
-        L"Game Translation Overlay — Settings",
-        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-        (sx - WND_W) / 2, (sy - WND_H) / 2,
-        WND_W, WND_H,
+        L"LIGHT TRANSLATE — Settings",
+        WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX | WS_SYSMENU,
+        (sx - width) / 2, (sy - height) / 2,
+        width, height,
         nullptr, nullptr, hInstance, this
     );
 
-    return m_hwnd != nullptr;
+    if (!m_hwnd) return false;
+
+    // Restore window position if saved
+    if (m_config.settingsWndPos.x != -1 && m_config.settingsWndPos.y != -1)
+    {
+        SetWindowPos(m_hwnd, nullptr, m_config.settingsWndPos.x, m_config.settingsWndPos.y, 0, 0,
+                     SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+
+    // Initialize D3D11
+    if (!CreateDeviceD3D(m_hwnd))
+    {
+        CleanupDeviceD3D();
+        return false;
+    }
+
+    // Setup ImGui
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO(); (void)io;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+
+    ImGui::StyleColorsDark();
+    ApplyImGuiStyle();
+    ImGui::GetStyle().ScaleAllSizes(m_dpiScale);
+
+    ImGui_ImplWin32_Init(m_hwnd);
+    ImGui_ImplDX11_Init(m_pd3dDevice, m_pd3dDeviceContext);
+
+    LoadFonts();
+
+    // Populate buffers
+    ConfigToUI();
+
+    // Register toggle & region hotkeys
+    RegisterToggleWndHotkey();
+    RegisterRegionHotkey();
+
+    // Synchronize window states
+    SyncHelperWindows();
+
+    return true;
 }
 
 // -----------------------------------------------------------------------------
@@ -84,12 +226,44 @@ bool SettingsWindow::Create(HINSTANCE hInstance)
 int SettingsWindow::RunMessageLoop()
 {
     MSG msg{};
-    while (GetMessageW(&msg, nullptr, 0, 0))
+    while (true)
     {
-        TranslateMessage(&msg);
-        DispatchMessageW(&msg);
+        bool isVisible = IsWindowVisible(m_hwnd) && !IsIconic(m_hwnd);
+
+        if (isVisible)
+        {
+            while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
+            {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+                if (msg.message == WM_QUIT)
+                    return static_cast<int>(msg.wParam);
+            }
+
+            if (m_SwapChainOccluded && m_pSwapChain->Present(0, DXGI_PRESENT_TEST) == DXGI_STATUS_OCCLUDED)
+            {
+                ::Sleep(10);
+                continue;
+            }
+            m_SwapChainOccluded = false;
+
+            RenderFrame();
+        }
+        else
+        {
+            if (GetMessageW(&msg, nullptr, 0, 0) > 0)
+            {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+                if (msg.message == WM_QUIT)
+                    return static_cast<int>(msg.wParam);
+            }
+            else
+            {
+                return static_cast<int>(msg.wParam);
+            }
+        }
     }
-    return static_cast<int>(msg.wParam);
 }
 
 // -----------------------------------------------------------------------------
@@ -98,6 +272,9 @@ int SettingsWindow::RunMessageLoop()
 
 LRESULT CALLBACK SettingsWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
+    if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam))
+        return true;
+
     SettingsWindow* pThis = nullptr;
     if (msg == WM_NCCREATE)
     {
@@ -119,100 +296,6 @@ LRESULT SettingsWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
 {
     switch (msg)
     {
-        // -- Creation --------------------------------------------------------------
-    case WM_CREATE:
-    {
-        // Load persisted config
-        m_config.Load(GetIniPath());
-
-        // Restore window position if saved
-        if (m_config.settingsWndPos.x != -1 && m_config.settingsWndPos.y != -1)
-        {
-            SetWindowPos(m_hwnd, nullptr, m_config.settingsWndPos.x, m_config.settingsWndPos.y, 0, 0,
-                         SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-        }
-
-        // Initialize Capture Helper window
-        m_captureHelper.Create(m_hInstance);
-        m_captureHelper.SetRect(m_config.captureRect);
-        m_captureHelper.OnRectChanged = [&](const RECT& rc)
-            {
-                m_config.captureRect = rc;
-                m_config.captureSet = true;
-                UpdateRegionLabel();
-            };
-        m_captureHelper.OnRoiRectChanged = [&](const RECT& rc)
-            {
-                UpdateRoiLabel();
-            };
-
-        // Initialise Overlay window
-        m_overlay.Create(m_hInstance);
-        m_overlay.SetPosition(m_config.overlayPos.x, m_config.overlayPos.y);
-        m_overlay.SetSize(m_config.overlayWidth, m_config.overlayHeight);
-        m_overlay.OnMoved = [&](int x, int y)
-            {
-                if (m_config.displayMode != DisplayMode::InPlace)
-                {
-                    m_config.overlayPos = { x, y };
-                    int w, h;
-                    m_overlay.GetSize(w, h);
-                    m_config.overlayWidth = w;
-                    m_config.overlayHeight = h;
-                }
-                // Update edit boxes (post to avoid nested SendMessage)
-                PostMessageW(m_hwnd, WM_UPDATE_STATUS,
-                    0, reinterpret_cast<LPARAM>(nullptr));
-            };
-
-        // Create child controls
-        CreateControls();
-
-        // Populate controls with loaded config
-        ConfigToUI();
-
-        // Register settings window toggle hotkey (active globally while app is open)
-        RegisterToggleWndHotkey();
-
-        // Register region selection hotkey (active globally, no need for START)
-        RegisterRegionHotkey();
-
-        // Initialize region selection + result windows
-        m_regionSelect.Create(m_hInstance);
-        m_regionSelect.OnRegionSelected = [&](const RECT& rc)
-            {
-                // Show result window immediately with placeholder text
-                m_regionResult.SetFontName(m_config.fontName);
-                m_regionResult.SetFontSize(m_config.fontSize);
-                m_regionResult.ShowResult(rc, L"");
-
-                // Spawn a background thread for capture + OCR + translate
-                std::thread([this, rc]() {
-                    PerformRegionCapture(rc);
-                }).detach();
-            };
-        m_regionResult.Create(m_hInstance);
-
-        // Show helper windows if Settings is visible
-        SyncHelperWindows();
-
-        // Scheduler status callback
-        m_controller->OnStatus = [&](const std::wstring& s)
-            {
-                if (IsIconic(m_hwnd) || !IsWindowVisible(m_hwnd))
-                {
-                    return;
-                }
-                // Marshal to UI thread
-                wchar_t* buf = new wchar_t[s.size() + 1];
-                std::wmemcpy(buf, s.c_str(), s.size() + 1);
-                PostMessageW(m_hwnd, WM_UPDATE_STATUS, 0, reinterpret_cast<LPARAM>(buf));
-            };
-
-        return 0;
-    }
-
-    // -- Status update (from any thread) ---------------------------------------
     case WM_UPDATE_STATUS:
     {
         if (lParam)
@@ -221,18 +304,9 @@ LRESULT SettingsWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
             UpdateStatus(buf);
             delete[] buf;
         }
-        else
-        {
-            // Refresh overlay position label after a drag move
-            wchar_t posBuf[64]{};
-            swprintf(posBuf, 64, L"X: %ld   Y: %ld",
-                m_config.overlayPos.x, m_config.overlayPos.y);
-            SetDlgItemTextW(m_hwnd, IDC_OVERLAY_POS_LABEL, posBuf);
-        }
         return 0;
     }
 
-    // -- Show region select result (from background thread) ---------------------
     case WM_SHOW_REGION_RESULT:
     {
         if (lParam)
@@ -253,57 +327,83 @@ LRESULT SettingsWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
         return 0;
     }
 
-    // -- Tab notification ------------------------------------------------------
-    case WM_NOTIFY:
-    {
-        auto* nmhdr = reinterpret_cast<NMHDR*>(lParam);
-        if (nmhdr->idFrom == IDC_TAB_CTRL && nmhdr->code == TCN_SELCHANGE)
-        {
-            OnTabChanged();
-        }
-        break;
-    }
-
-    // -- Hotkey ----------------------------------------------------------------
     case WM_HOTKEY:
     {
         OnHotkey(static_cast<int>(wParam));
         return 0;
     }
 
-    // -- Commands (controls + tray menu) ---------------------------------------
+    case WM_KEYDOWN:
+    case WM_SYSKEYDOWN:
+    {
+        if (m_recordingHotkeyType != 0)
+        {
+            UINT vk = static_cast<UINT>(wParam);
+            UINT mod = 0;
+            if (GetKeyState(VK_CONTROL) & 0x8000) mod |= MOD_CONTROL;
+            if (GetKeyState(VK_SHIFT)   & 0x8000) mod |= MOD_SHIFT;
+            if (GetKeyState(VK_MENU)    & 0x8000) mod |= MOD_ALT;
+            if (GetKeyState(VK_LWIN)    & 0x8000) mod |= MOD_WIN;
+            if (GetKeyState(VK_RWIN)    & 0x8000) mod |= MOD_WIN;
+
+            bool isModifierKey = (vk == VK_CONTROL || vk == VK_LCONTROL || vk == VK_RCONTROL ||
+                                  vk == VK_SHIFT || vk == VK_LSHIFT || vk == VK_RSHIFT ||
+                                  vk == VK_MENU || vk == VK_LMENU || vk == VK_RMENU ||
+                                  vk == VK_LWIN || vk == VK_RWIN);
+
+            if (!isModifierKey)
+            {
+                if ((vk == VK_ESCAPE || vk == VK_BACK || vk == VK_DELETE) && mod == 0)
+                {
+                    vk = 0;
+                    mod = 0;
+                }
+
+                if (m_recordingHotkeyType == 1)
+                {
+                    m_config.hotkeyVk = vk;
+                    m_config.hotkeyMod = mod;
+                    if (m_running) RegisterCaptureHotkey();
+                }
+                else if (m_recordingHotkeyType == 2)
+                {
+                    m_config.pauseHotkeyVk = vk;
+                    m_config.pauseHotkeyMod = mod;
+                    if (m_running) RegisterPauseHotkey();
+                }
+                else if (m_recordingHotkeyType == 3)
+                {
+                    m_config.toggleWndVk = vk;
+                    m_config.toggleWndMod = mod;
+                    RegisterToggleWndHotkey();
+                }
+                else if (m_recordingHotkeyType == 4)
+                {
+                    m_config.regionHotkeyVk = vk;
+                    m_config.regionHotkeyMod = mod;
+                    RegisterRegionHotkey();
+                }
+
+                m_recordingHotkeyType = 0;
+            }
+            return 0;
+        }
+        break;
+    }
+
     case WM_COMMAND:
     {
         WORD id = LOWORD(wParam);
         switch (id)
         {
-        case IDC_START_BTN:        OnStart();                             break;
-        case IDC_STOP_BTN:         OnStop();                              break;
-        case IDC_SELECT_REGION:    OnSelectRegion();                      break;
-        case IDC_TEST_API_BTN:     OnTestApi();                           break;
-        case IDC_SAVE_BTN:         OnSave();                              break;
-        case IDC_ROI_ACTIVE_CHECK: OnRoiActiveChanged();                  break;
-        case IDC_TEXT_COLOR_BTN:   OnTextColorPick();                     break;
-        case IDC_SHADOW_COLOR_BTN: OnColorPick(m_config.shadowColor);     break;
-        case IDC_STROKE_COLOR_BTN: OnColorPick(m_config.strokeColor);     break;
-            // Provider combo - notify when selection changes
-        case IDC_PROVIDER_COMBO:
-            if (HIWORD(wParam) == CBN_SELCHANGE) OnProviderChanged();
-            break;
-            // Capture mode combo
-        case IDC_CAPTURE_MODE_COMBO:
-            if (HIWORD(wParam) == CBN_SELCHANGE) OnCaptureModeChanged();
-            break;
-            // Display mode combo
-        case IDC_DISPLAY_MODE_COMBO:
-            if (HIWORD(wParam) == CBN_SELCHANGE) OnDisplayModeChanged();
-            break;
-            // Tray menu
         case ID_TRAY_SHOW:
             RemoveTrayIcon();
             ShowWindow(m_hwnd, SW_RESTORE);
             SetForegroundWindow(m_hwnd);
             SyncHelperWindows();
+            break;
+        case ID_TRAY_TOGGLE_DRAG:
+            OnToggleDrag();
             break;
         case ID_TRAY_EXIT:
             SendMessageW(m_hwnd, WM_CLOSE, 0, 0);
@@ -312,7 +412,6 @@ LRESULT SettingsWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
         return 0;
     }
 
-    // -- Tray icon -------------------------------------------------------------
     case WM_TRAYICON:
     {
         if (lParam == WM_RBUTTONUP || lParam == WM_CONTEXTMENU)
@@ -327,7 +426,33 @@ LRESULT SettingsWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
         return 0;
     }
 
-    // -- Minimise -> go to tray -------------------------------------------------
+    case WM_NCCALCSIZE:
+    {
+        if (wParam == TRUE)
+        {
+            return 0; // Remove standard frame and borders
+        }
+        break;
+    }
+
+    case WM_NCHITTEST:
+    {
+        POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        ScreenToClient(m_hwnd, &pt);
+        
+        int titleHeight = static_cast<int>(40 * m_dpiScale);
+        RECT clientRect{};
+        GetClientRect(m_hwnd, &clientRect);
+        int w = clientRect.right - clientRect.left;
+        
+        if (pt.y >= 0 && pt.y < titleHeight)
+        {
+            if (pt.x < w - static_cast<int>(100 * m_dpiScale))
+                return HTCAPTION;
+        }
+        return HTCLIENT;
+    }
+
     case WM_SIZE:
         if (wParam == SIZE_MINIMIZED)
         {
@@ -337,7 +462,6 @@ LRESULT SettingsWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
         SyncHelperWindows();
         return 0;
 
-        // -- Close -----------------------------------------------------------------
     case WM_CLOSE:
         OnStop();
         UnregisterCaptureHotkey();
@@ -350,7 +474,7 @@ LRESULT SettingsWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
         m_overlay.Destroy();
         RemoveTrayIcon();
 
-        // Save settings window position
+        // Save position
         {
             WINDOWPLACEMENT wp{};
             wp.length = sizeof(wp);
@@ -369,527 +493,555 @@ LRESULT SettingsWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
         return 0;
     }
 
-    // Handle tray menu WM_COMMAND (comes as top-level WM_COMMAND after menu pump)
     return DefWindowProcW(m_hwnd, msg, wParam, lParam);
 }
 
 // -----------------------------------------------------------------------------
-//  Control creation helpers
+//  D3D11 Helpers
 // -----------------------------------------------------------------------------
 
-HWND SettingsWindow::MakeLabel(int x, int y, int w, int h, const wchar_t* txt, UINT id)
+bool SettingsWindow::CreateDeviceD3D(HWND hWnd)
 {
-    return CreateWindowExW(0, L"STATIC", txt,
-        WS_CHILD | WS_VISIBLE | SS_LEFT,
-        x, y, w, h, m_hwnd,
-        id == -1 ? nullptr : reinterpret_cast<HMENU>(static_cast<UINT_PTR>(id)),
-        m_hInstance, nullptr);
+    DXGI_SWAP_CHAIN_DESC sd;
+    ZeroMemory(&sd, sizeof(sd));
+    sd.BufferCount = 2;
+    sd.BufferDesc.Width = 0;
+    sd.BufferDesc.Height = 0;
+    sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    sd.BufferDesc.RefreshRate.Numerator = 60;
+    sd.BufferDesc.RefreshRate.Denominator = 1;
+    sd.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
+    sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+    sd.OutputWindow = hWnd;
+    sd.SampleDesc.Count = 1;
+    sd.SampleDesc.Quality = 0;
+    sd.Windowed = TRUE;
+    sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+
+    UINT createDeviceFlags = 0;
+    D3D_FEATURE_LEVEL featureLevel;
+    const D3D_FEATURE_LEVEL featureLevelArray[2] = { D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_0 };
+    HRESULT res = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, createDeviceFlags, featureLevelArray, 2, D3D11_SDK_VERSION, &sd, &m_pSwapChain, &m_pd3dDevice, &featureLevel, &m_pd3dDeviceContext);
+    if (res == DXGI_ERROR_UNSUPPORTED)
+        res = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, createDeviceFlags, featureLevelArray, 2, D3D11_SDK_VERSION, &sd, &m_pSwapChain, &m_pd3dDevice, &featureLevel, &m_pd3dDeviceContext);
+    if (res != S_OK)
+        return false;
+
+    CreateRenderTarget();
+    return true;
 }
 
-HWND SettingsWindow::MakeEdit(int x, int y, int w, int h, UINT id, bool multiLine)
+void SettingsWindow::CleanupDeviceD3D()
 {
-    DWORD style = WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL;
-    if (multiLine) style |= ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL | ES_READONLY;
-    return CreateWindowExW(0, L"EDIT", L"", style,
-        x, y, w, h, m_hwnd,
-        reinterpret_cast<HMENU>(static_cast<UINT_PTR>(id)),
-        m_hInstance, nullptr);
+    CleanupRenderTarget();
+    if (m_pSwapChain) { m_pSwapChain->Release(); m_pSwapChain = nullptr; }
+    if (m_pd3dDeviceContext) { m_pd3dDeviceContext->Release(); m_pd3dDeviceContext = nullptr; }
+    if (m_pd3dDevice) { m_pd3dDevice->Release(); m_pd3dDevice = nullptr; }
 }
 
-HWND SettingsWindow::MakeButton(int x, int y, int w, int h, const wchar_t* txt, UINT id)
+void SettingsWindow::CreateRenderTarget()
 {
-    return CreateWindowExW(0, L"BUTTON", txt,
-        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-        x, y, w, h, m_hwnd,
-        reinterpret_cast<HMENU>(static_cast<UINT_PTR>(id)),
-        m_hInstance, nullptr);
+    ID3D11Texture2D* pBackBuffer = nullptr;
+    m_pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer));
+    if (pBackBuffer)
+    {
+        m_pd3dDevice->CreateRenderTargetView(pBackBuffer, nullptr, &m_mainRenderTargetView);
+        pBackBuffer->Release();
+    }
 }
 
-HWND SettingsWindow::MakeCheck(int x, int y, int w, int h, const wchar_t* txt, UINT id)
+void SettingsWindow::CleanupRenderTarget()
 {
-    return CreateWindowExW(0, L"BUTTON", txt,
-        WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-        x, y, w, h, m_hwnd,
-        reinterpret_cast<HMENU>(static_cast<UINT_PTR>(id)),
-        m_hInstance, nullptr);
-}
-
-HWND SettingsWindow::MakeCombo(int x, int y, int w, int h, UINT id)
-{
-    return CreateWindowExW(0, L"COMBOBOX", L"",
-        WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL,
-        x, y, w, h, m_hwnd,
-        reinterpret_cast<HMENU>(static_cast<UINT_PTR>(id)),
-        m_hInstance, nullptr);
-}
-
-HWND SettingsWindow::MakeGroup(int x, int y, int w, int h, const wchar_t* txt)
-{
-    return CreateWindowExW(0, L"BUTTON", txt,
-        WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
-        x, y, w, h, m_hwnd, nullptr, m_hInstance, nullptr);
-}
-
-// -----------------------------------------------------------------------------
-//  CreateControls - tabbed layout
-// -----------------------------------------------------------------------------
-
-void SettingsWindow::CreateControls()
-{
-    const int M = 10;   // margin
-    const int W = WND_W - M * 2 - 10;  // usable width
-
-    int y = M;
-
-    // -- Tab Control -----------------------------------------------------------
-    m_tabCtrl = CreateWindowExW(0, WC_TABCONTROLW, L"",
-        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | TCS_TABS,
-        M, y, W, 560,
-        m_hwnd,
-        reinterpret_cast<HMENU>(static_cast<UINT_PTR>(IDC_TAB_CTRL)),
-        m_hInstance, nullptr);
-
-    // Insert tabs: Realtime, Region, Translate, System
-    TCITEMW tie{};
-    tie.mask = TCIF_TEXT;
-
-    tie.pszText = const_cast<wchar_t*>(L"Realtime");
-    TabCtrl_InsertItem(m_tabCtrl, 0, &tie);
-
-    tie.pszText = const_cast<wchar_t*>(L"Region");
-    TabCtrl_InsertItem(m_tabCtrl, 1, &tie);
-
-    tie.pszText = const_cast<wchar_t*>(L"Translate");
-    TabCtrl_InsertItem(m_tabCtrl, 2, &tie);
-
-    tie.pszText = const_cast<wchar_t*>(L"System");
-    TabCtrl_InsertItem(m_tabCtrl, 3, &tie);
-
-    // Get the display area inside the tab control
-    RECT tabRect{};
-    GetClientRect(m_tabCtrl, &tabRect);
-    TabCtrl_AdjustRect(m_tabCtrl, FALSE, &tabRect);
-
-    int tabX = M + tabRect.left;
-    int tabY = y + tabRect.top;
-    int tabW = tabRect.right - tabRect.left;
-
-    // Create controls for each tab
-    CreateRealtimeTab(tabX, tabY, tabW);
-    CreateTranslateTab(tabX, tabY, tabW);
-    CreateRegionTab(tabX, tabY, tabW);
-    CreateSystemTab(tabX, tabY, tabW);
-
-    // Show the first tab (Realtime) by default
-    ShowTab(0);
-
-    y += 568;   // below tab control
-
-    // -- Start / Stop (always visible) -----------------------------------------
-    MakeButton(M, y, 120, 36, L"\u25B6  START", IDC_START_BTN);
-    MakeButton(WND_W - 140, y, 120, 36, L"\u25A0  STOP", IDC_STOP_BTN);
-    EnableWindow(GetDlgItem(m_hwnd, IDC_STOP_BTN), FALSE);
-    y += 44;
-
-    // -- Status log (always visible) -------------------------------------------
-    MakeGroup(M, y, W, 175, L"  Output Log  ");
-    y += 18;
-    MakeEdit(M + 8, y, W - 16, 145, IDC_STATUS_EDIT, true);
-
-    // Default font for all controls
-    HFONT hFont = static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
-    EnumChildWindows(m_hwnd, [](HWND child, LPARAM lp) -> BOOL {
-        SendMessageW(child, WM_SETFONT, lp, TRUE);
-        return TRUE;
-        }, reinterpret_cast<LPARAM>(hFont));
+    if (m_mainRenderTargetView) { m_mainRenderTargetView->Release(); m_mainRenderTargetView = nullptr; }
 }
 
 // -----------------------------------------------------------------------------
-//  CreateRealtimeTab — Capture + Overlay settings
+//  ImGui Rendering & Style
 // -----------------------------------------------------------------------------
 
-void SettingsWindow::CreateRealtimeTab(int x, int y, int w)
+void SettingsWindow::RenderFrame()
 {
-    const int LH = 22;
-    const int EH = 24;
-    const int BH = 28;
-    HWND h;
+    ImGui_ImplDX11_NewFrame();
+    ImGui_ImplWin32_NewFrame();
+    ImGui::NewFrame();
 
-    int cy = y + 4;
+    RenderUI();
 
-    // -- Capture Settings group ------------------------------------------------
-    h = MakeGroup(x, cy, w, 185, L"  Capture Settings  ");
-    m_realtimeControls.push_back(h);
-    cy += 18;
+    ImGui::Render();
+    const float clear_color_with_alpha[4] = { 0.11f, 0.11f, 0.13f, 1.00f };
+    m_pd3dDeviceContext->OMSetRenderTargets(1, &m_mainRenderTargetView, nullptr);
+    m_pd3dDeviceContext->ClearRenderTargetView(m_mainRenderTargetView, clear_color_with_alpha);
+    ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 
-    h = MakeLabel(x + 8, cy, 70, LH, L"Monitor:");
-    m_realtimeControls.push_back(h);
-    {
-        HWND hMonitor = MakeCombo(x + 80, cy, 120, 140, IDC_MONITOR_COMBO);
-        SendMessageW(hMonitor, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"0 - Primary"));
-        SendMessageW(hMonitor, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"1 - Second"));
-        SendMessageW(hMonitor, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"2 - Third"));
-        SendMessageW(hMonitor, CB_SETCURSEL, 0, 0);
-        m_realtimeControls.push_back(hMonitor);
-    }
-    cy += EH + 6;
-
-    h = MakeButton(x + 8, cy, 170, BH, L"Reset Capture Region", IDC_SELECT_REGION);
-    m_realtimeControls.push_back(h);
-    {
-        HWND hRegion = CreateWindowExW(0, L"STATIC", L"(not set)",
-            WS_CHILD | WS_VISIBLE | SS_LEFT,
-            x + 185, cy + 4, w - 192, LH, m_hwnd,
-            reinterpret_cast<HMENU>(static_cast<UINT_PTR>(IDC_REGION_INFO)),
-            m_hInstance, nullptr);
-        m_realtimeControls.push_back(hRegion);
-    }
-    cy += BH + 6;
-
-    // Capture mode selector
-    h = MakeLabel(x + 8, cy, 90, LH, L"Capture Mode:");
-    m_realtimeControls.push_back(h);
-    {
-        HWND hMode = MakeCombo(x + 100, cy, 200, 80, IDC_CAPTURE_MODE_COMBO);
-        SendMessageW(hMode, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Auto (continuous)"));
-        SendMessageW(hMode, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Hotkey (single frame)"));
-        SendMessageW(hMode, CB_SETCURSEL, 0, 0);
-        m_realtimeControls.push_back(hMode);
-    }
-    cy += EH + 6;
-
-    // Scale ROI input
-    h = MakeLabel(x + 8, cy, 100, LH, L"Scale ROI (%):");
-    m_realtimeControls.push_back(h);
-    h = MakeEdit(x + 110, cy, 70, EH, IDC_SCALE_ROI_EDIT);
-    SetWindowTextW(h, L"80");
-    m_realtimeControls.push_back(h);
-    cy += EH + 6;
-
-    // Auto mode: interval in ms & pause hotkey
-    {
-        h = MakeLabel(x + 8, cy, 100, LH, L"Interval (ms):");
-        m_realtimeControls.push_back(h);
-        m_autoModeControls.push_back(h);
-
-        h = MakeEdit(x + 110, cy, 70, EH, IDC_INTERVAL_EDIT);
-        SetWindowTextW(h, L"1000");
-        m_realtimeControls.push_back(h);
-        m_autoModeControls.push_back(h);
-
-        h = MakeLabel(x + 200, cy, 90, LH, L"Pause Hotkey:");
-        m_realtimeControls.push_back(h);
-        m_autoModeControls.push_back(h);
-
-        h = MakeEdit(x + 295, cy, 130, EH, IDC_PAUSE_HOTKEY_EDIT);
-        SetWindowTextW(h, L"Ctrl + P");
-        SetWindowSubclass(h, HotkeyEditSubclassProc, IDC_PAUSE_HOTKEY_EDIT, reinterpret_cast<DWORD_PTR>(this));
-        m_realtimeControls.push_back(h);
-        m_autoModeControls.push_back(h);
-    }
-
-    // Hotkey mode: hotkey display
-    {
-        h = MakeLabel(x + 8, cy, 110, LH, L"Hotkey:");
-        m_realtimeControls.push_back(h);
-        m_hotkeyModeControls.push_back(h);
-        h = MakeEdit(x + 120, cy, 80, EH, IDC_HOTKEY_EDIT);
-        SetWindowTextW(h, L"Ctrl + N");
-        SetWindowSubclass(h, HotkeyEditSubclassProc, IDC_HOTKEY_EDIT, reinterpret_cast<DWORD_PTR>(this));
-        m_realtimeControls.push_back(h);
-        m_hotkeyModeControls.push_back(h);
-    }
-    cy += EH + 10;
-
-    // -- ROI Idle Text Detection group -----------------------------------------
-    h = MakeGroup(x, cy, w, 110, L"  ROI Idle Text Detection  ");
-    m_realtimeControls.push_back(h);
-    cy += 18;
-
-    h = MakeCheck(x + 8, cy, 250, LH, L"Enable ROI Idle Detection", IDC_ROI_ACTIVE_CHECK);
-    m_realtimeControls.push_back(h);
-    cy += LH + 6;
-
-    h = MakeLabel(x + 8, cy, 160, LH, L"Idle Timeout (ms):");
-    m_realtimeControls.push_back(h);
-
-    h = MakeEdit(x + 175, cy, 60, EH, IDC_ROI_TIMEOUT_EDIT);
-    m_realtimeControls.push_back(h);
-
-    h = MakeLabel(x + 250, cy, 130, LH, L"ROI Rect (X,Y,W,H):");
-    m_realtimeControls.push_back(h);
-
-    h = MakeLabel(x + 380, cy, w - 380 - 8, LH, L"0, 0, 0, 0", IDC_ROI_RECT_LABEL);
-    m_realtimeControls.push_back(h);
-
-    cy += EH + 24;
-
-    // -- Overlay & Typography group --------------------------------------------
-    h = MakeGroup(x, cy, w, 210, L"  Overlay & Typography  ");
-    m_realtimeControls.push_back(h);
-    cy += 18;
-
-    h = MakeLabel(x + 8, cy, 100, LH, L"Display Mode:");
-    m_realtimeControls.push_back(h);
-    {
-        HWND hDispMode = MakeCombo(x + 110, cy, 200, 80, IDC_DISPLAY_MODE_COMBO);
-        SendMessageW(hDispMode, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"In-Place (Default)"));
-        SendMessageW(hDispMode, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Overlay Window"));
-        SendMessageW(hDispMode, CB_SETCURSEL, 0, 0);
-        m_realtimeControls.push_back(hDispMode);
-    }
-    cy += EH + 6;
-
-    h = MakeLabel(x + 8, cy, 72, LH, L"Position:");
-    m_realtimeControls.push_back(h);
-    m_overlayPosControls.push_back(h);
-    {
-        HWND hPos = CreateWindowExW(0, L"STATIC", L"-",
-            WS_CHILD | WS_VISIBLE | SS_LEFT,
-            x + 82, cy, w - 88, LH, m_hwnd,
-            reinterpret_cast<HMENU>(static_cast<UINT_PTR>(IDC_OVERLAY_POS_LABEL)),
-            m_hInstance, nullptr);
-        m_realtimeControls.push_back(hPos);
-        m_overlayPosControls.push_back(hPos);
-    }
-    cy += EH + 6;
-
-    h = MakeLabel(x + 8, cy, 60, LH, L"Font:");
-    m_realtimeControls.push_back(h);
-    m_overlayPosControls.push_back(h);
-    h = MakeEdit(x + 70, cy, 180, EH, IDC_FONT_NAME_EDIT);
-    m_realtimeControls.push_back(h);
-    m_overlayPosControls.push_back(h);
-    h = MakeLabel(x + 260, cy, 40, LH, L"Size:");
-    m_realtimeControls.push_back(h);
-    m_overlayPosControls.push_back(h);
-    h = MakeEdit(x + 302, cy, 55, EH, IDC_FONT_SIZE_EDIT);
-    m_realtimeControls.push_back(h);
-    m_overlayPosControls.push_back(h);
-    cy += EH + 8;
-
-    h = MakeLabel(x + 8, cy, 80, LH, L"Text Color:");
-    m_realtimeControls.push_back(h);
-    m_overlayPosControls.push_back(h);
-    h = MakeButton(x + 90, cy, 90, BH, L"Choose\u2026", IDC_TEXT_COLOR_BTN);
-    m_realtimeControls.push_back(h);
-    m_overlayPosControls.push_back(h);
-    cy += BH + 4;
-
-    h = MakeCheck(x + 8, cy, 80, LH, L"Shadow", IDC_SHADOW_CHECK);
-    m_realtimeControls.push_back(h);
-    m_overlayPosControls.push_back(h);
-    h = MakeButton(x + 90, cy, 90, BH, L"Color\u2026", IDC_SHADOW_COLOR_BTN);
-    m_realtimeControls.push_back(h);
-    m_overlayPosControls.push_back(h);
-    cy += BH + 4;
-
-    h = MakeCheck(x + 8, cy, 80, LH, L"Stroke", IDC_STROKE_CHECK);
-    m_realtimeControls.push_back(h);
-    m_overlayPosControls.push_back(h);
-    h = MakeButton(x + 90, cy, 90, BH, L"Color\u2026", IDC_STROKE_COLOR_BTN);
-    m_realtimeControls.push_back(h);
-    m_overlayPosControls.push_back(h);
+    HRESULT hr = m_pSwapChain->Present(1, 0);
+    m_SwapChainOccluded = (hr == DXGI_STATUS_OCCLUDED);
 }
 
-// -----------------------------------------------------------------------------
-//  CreateTranslateTab — API settings
-// -----------------------------------------------------------------------------
-
-void SettingsWindow::CreateTranslateTab(int x, int y, int w)
+void SettingsWindow::RenderUI()
 {
-    const int LH = 22;
-    const int EH = 24;
-    const int BH = 28;
-    HWND h;
+    RECT rect{};
+    GetClientRect(m_hwnd, &rect);
+    int w = rect.right - rect.left;
+    int h = rect.bottom - rect.top;
 
-    int cy = y + 4;
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(ImVec2(static_cast<float>(w), static_cast<float>(h)));
 
-    // Provider & Language
-    h = MakeLabel(x + 8, cy, 75, LH, L"Provider:");
-    m_translateControls.push_back(h);
+    ImGuiWindowFlags wndFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
+    
+    ImGui::Begin("SettingsWindowImGui", nullptr, wndFlags);
+
+    // Custom Title Bar Area (LIGHT TRANSLATE)
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, 10.0f));
+    ImGui::BeginGroup();
+    
+    // Icon / Title
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(ImVec4(0.48f, 0.40f, 0.92f, 1.00f), "  LIGHT TRANSLATE");
+    
+    // Minimize button
+    ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - 125.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.18f, 0.21f, 1.0f)); // Visible frame bg
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.24f, 0.28f, 1.0f));
+    
+    ImVec2 min_pos = ImGui::GetCursorScreenPos();
+    if (ImGui::Button("##minimize", ImVec2(35, 25)))
     {
-        HWND hProv = MakeCombo(x + 85, cy, 160, 80, IDC_PROVIDER_COMBO);
-        SendMessageW(hProv, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"DeepSeek"));
-        SendMessageW(hProv, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Google Translate"));
-        SendMessageW(hProv, CB_SETCURSEL, 0, 0);
-        m_translateControls.push_back(hProv);
+        ShowWindow(m_hwnd, SW_MINIMIZE);
     }
-
-    h = MakeLabel(x + 260, cy, 80, LH, L"Target Lang:");
-    m_translateControls.push_back(h);
+    ImGui::GetWindowDrawList()->AddLine(
+        ImVec2(min_pos.x + 11, min_pos.y + 15),
+        ImVec2(min_pos.x + 24, min_pos.y + 15),
+        ImGui::GetColorU32(ImGuiCol_Text), 1.5f
+    );
+    ImGui::PopStyleColor(3);
+    
+    // Close button
+    ImGui::SameLine();
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.18f, 0.21f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.9f, 0.15f, 0.15f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.8f, 0.15f, 0.15f, 1.0f)); // Red hover
+    
+    ImVec2 close_pos = ImGui::GetCursorScreenPos();
+    if (ImGui::Button("##close", ImVec2(35, 25)))
     {
-        HWND hLang = CreateWindowExW(0, L"COMBOBOX", L"",
-            WS_CHILD | WS_VISIBLE | CBS_DROPDOWN | CBS_AUTOHSCROLL | WS_VSCROLL,
-            x + 345, cy, w - 355, 200, m_hwnd,
-            reinterpret_cast<HMENU>(static_cast<UINT_PTR>(IDC_LANGUAGE_COMBO)),
-            m_hInstance, nullptr);
+        PostMessageW(m_hwnd, WM_CLOSE, 0, 0);
+    }
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+    draw_list->AddLine(
+        ImVec2(close_pos.x + 12, close_pos.y + 7),
+        ImVec2(close_pos.x + 23, close_pos.y + 18),
+        ImGui::GetColorU32(ImGuiCol_Text), 1.5f
+    );
+    draw_list->AddLine(
+        ImVec2(close_pos.x + 23, close_pos.y + 7),
+        ImVec2(close_pos.x + 12, close_pos.y + 18),
+        ImGui::GetColorU32(ImGuiCol_Text), 1.5f
+    );
+    ImGui::PopStyleColor(3);
+    
+    ImGui::EndGroup();
+    ImGui::PopStyleVar();
+    
+    ImGui::Separator();
 
-        const wchar_t* commonLangs[] = {
-            L"Vietnamese",
-            L"English",
-            L"Japanese",
-            L"Chinese (Simplified)",
-            L"Chinese (Traditional)",
-            L"Korean",
-            L"French",
-            L"German",
-            L"Russian",
-            L"Spanish",
-            L"Portuguese",
-            L"Italian",
-            L"Arabic",
-            L"Thai",
-            L"Indonesian",
-            L"Hindi",
-            L"Turkish"
-        };
-        for (const wchar_t* lang : commonLangs)
+    // Tab Bar
+    if (ImGui::BeginTabBar("Tabs"))
+    {
+        // ----------------- REALTIME TAB -----------------
+        if (ImGui::BeginTabItem("Realtime"))
         {
-            SendMessageW(hLang, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(lang));
+            ImGui::TextDisabled("Capture Settings");
+            
+            // Monitor index selection
+            const char* monitorOptions[] = { "0 - Primary", "1 - Second", "2 - Third" };
+            int currentMon = std::min(m_config.monitorIndex, 2);
+            ImGui::SetNextItemWidth(150.0f);
+            if (ImGui::Combo("Monitor", &currentMon, monitorOptions, IM_ARRAYSIZE(monitorOptions)))
+            {
+                m_config.monitorIndex = currentMon;
+            }
+
+            // Capture region display/reset
+            ImGui::SameLine();
+            if (ImGui::Button("Reset Capture Region"))
+            {
+                OnSelectRegion();
+            }
+            ImGui::SameLine();
+            ImGui::Text("Region: %s", WideToUtf8(GetRegionInfoText()).c_str());
+
+            // Capture Mode selection
+            const char* modeOptions[] = { "Auto (continuous)", "Hotkey (single frame)" };
+            int currentMode = static_cast<int>(m_config.captureMode);
+            ImGui::SetNextItemWidth(250.0f);
+            if (ImGui::Combo("Capture Mode", &currentMode, modeOptions, IM_ARRAYSIZE(modeOptions)))
+            {
+                m_config.captureMode = static_cast<CaptureMode>(currentMode);
+                OnCaptureModeChanged();
+            }
+
+            // Scale ROI
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(120.0f);
+            ImGui::DragInt("Scale ROI (%)", &m_config.scaleRoi, 1.0f, 10, 200);
+            if (m_config.scaleRoi <= 0) m_config.scaleRoi = 100;
+
+            // Mode-specific configuration
+            if (m_config.captureMode == CaptureMode::Auto)
+            {
+                ImGui::SetNextItemWidth(120.0f);
+                ImGui::DragInt("Interval (ms)", &m_config.captureIntervalMs, 50.0f, 100, 10000);
+                if (m_config.captureIntervalMs <= 0) m_config.captureIntervalMs = 1000;
+
+                ImGui::SameLine();
+                std::string pauseHotkeyStr = m_recordingHotkeyType == 2 ? "Press a key..." : WideToUtf8(HotkeyToString(m_config.pauseHotkeyVk, m_config.pauseHotkeyMod));
+                ImGui::Text("Pause Hotkey:"); ImGui::SameLine();
+                if (ImGui::Button(pauseHotkeyStr.c_str(), ImVec2(130, 0)))
+                {
+                    m_recordingHotkeyType = 2;
+                }
+            }
+            else
+            {
+                std::string hotkeyStr = m_recordingHotkeyType == 1 ? "Press a key..." : WideToUtf8(HotkeyToString(m_config.hotkeyVk, m_config.hotkeyMod));
+                ImGui::Text("Capture Hotkey:"); ImGui::SameLine();
+                if (ImGui::Button(hotkeyStr.c_str(), ImVec2(130, 0)))
+                {
+                    m_recordingHotkeyType = 1;
+                }
+            }
+
+            ImGui::Separator();
+            ImGui::TextDisabled("ROI Idle Text Detection");
+
+            if (ImGui::Checkbox("Enable ROI Idle Detection", &m_config.roiActive))
+            {
+                OnRoiActiveChanged();
+            }
+            if (m_config.roiActive)
+            {
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(120.0f);
+                ImGui::DragInt("Idle Timeout (ms)", &m_config.roiTimeoutMs, 100.0f, 500, 30000);
+                if (m_config.roiTimeoutMs <= 0) m_config.roiTimeoutMs = 3000;
+
+                ImGui::SameLine();
+                RECT roi = m_config.roiRect;
+                ImGui::Text("ROI Rect (X,Y,W,H): %ld, %ld, %ld, %ld", roi.left, roi.top, roi.right - roi.left, roi.bottom - roi.top);
+            }
+
+            ImGui::Separator();
+            ImGui::TextDisabled("Overlay & Typography");
+
+            const char* dispOptions[] = { "In-Place (Default)", "Overlay Window" };
+            int currentDisp = (m_config.displayMode == DisplayMode::InPlace) ? 0 : 1;
+            ImGui::SetNextItemWidth(200.0f);
+            if (ImGui::Combo("Display Mode", &currentDisp, dispOptions, IM_ARRAYSIZE(dispOptions)))
+            {
+                m_config.displayMode = (currentDisp == 0) ? DisplayMode::InPlace : DisplayMode::Overlay;
+                OnDisplayModeChanged();
+            }
+
+            if (m_config.displayMode == DisplayMode::Overlay)
+            {
+                ImGui::SameLine();
+                ImGui::Text("Pos: X: %ld   Y: %ld", m_config.overlayPos.x, m_config.overlayPos.y);
+
+                ImGui::SetNextItemWidth(150.0f);
+                ImGui::InputText("Font Name", m_fontNameBuf, sizeof(m_fontNameBuf));
+                
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(80.0f);
+                ImGui::DragInt("Size", &m_config.fontSize, 1.0f, 8, 72);
+                if (m_config.fontSize <= 0) m_config.fontSize = 24;
+
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(50.0f);
+                if (ImGui::ColorEdit3("Text Color", m_textColorFloat, ImGuiColorEditFlags_NoInputs))
+                {
+                    m_config.textColor = FloatToColorref(m_textColorFloat);
+                    SyncHelperWindows();
+                }
+
+                ImGui::Checkbox("Shadow", &m_config.shadowEnabled);
+                if (m_config.shadowEnabled)
+                {
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(50.0f);
+                    if (ImGui::ColorEdit3("Shadow Color", m_shadowColorFloat, ImGuiColorEditFlags_NoInputs))
+                    {
+                        m_config.shadowColor = FloatToColorref(m_shadowColorFloat);
+                        SyncHelperWindows();
+                    }
+                }
+
+                ImGui::SameLine();
+                ImGui::Checkbox("Stroke", &m_config.strokeEnabled);
+                if (m_config.strokeEnabled)
+                {
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(50.0f);
+                    if (ImGui::ColorEdit3("Stroke Color", m_strokeColorFloat, ImGuiColorEditFlags_NoInputs))
+                    {
+                        m_config.strokeColor = FloatToColorref(m_strokeColorFloat);
+                        SyncHelperWindows();
+                    }
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(80.0f);
+                    ImGui::DragFloat("Width", &m_config.strokeWidth, 0.1f, 1.0f, 10.0f, "%.1f");
+                    if (m_config.strokeWidth <= 0.0f) m_config.strokeWidth = 1.0f;
+                }
+            }
+
+            ImGui::EndTabItem();
         }
-        SendMessageW(hLang, CB_SETCURSEL, 0, 0);
-        m_translateControls.push_back(hLang);
+
+        // ----------------- REGION TAB -----------------
+        if (ImGui::BeginTabItem("Region"))
+        {
+            ImGui::TextWrapped("Press the hotkey to select a screen region for quick translation.");
+            ImGui::Spacing();
+
+            std::string regHotkeyStr = m_recordingHotkeyType == 4 ? "Press a key..." : WideToUtf8(HotkeyToString(m_config.regionHotkeyVk, m_config.regionHotkeyMod));
+            ImGui::Text("Selection Hotkey:"); ImGui::SameLine();
+            if (ImGui::Button(regHotkeyStr.c_str(), ImVec2(150, 0)))
+            {
+                m_recordingHotkeyType = 4;
+            }
+
+            ImGui::Spacing();
+            ImGui::TextWrapped("After selecting a region, the app will OCR and translate the text. Press any key to dismiss the result overlay.");
+
+            ImGui::EndTabItem();
+        }
+
+        // ----------------- TRANSLATE TAB -----------------
+        if (ImGui::BeginTabItem("Translate"))
+        {
+            const char* provOptions[] = { "DeepSeek", "Google Translate" };
+            int currentProv = (m_config.providerType == TranslateProvider::DeepSeek) ? 0 : 1;
+            ImGui::SetNextItemWidth(220.0f);
+            if (ImGui::Combo("Provider", &currentProv, provOptions, IM_ARRAYSIZE(provOptions)))
+            {
+                m_config.providerType = (currentProv == 0) ? TranslateProvider::DeepSeek : TranslateProvider::Google;
+                OnProviderChanged();
+            }
+
+            ImGui::SameLine();
+
+            const char* const commonLangs[] = {
+                "Vietnamese", "English", "Japanese", "Chinese (Simplified)", "Chinese (Traditional)",
+                "Korean", "French", "German", "Russian", "Spanish", "Portuguese", "Italian",
+                "Arabic", "Thai", "Indonesian", "Hindi", "Turkish"
+            };
+            int langIdx = 0;
+            std::string langUtf8 = WideToUtf8(m_config.targetLanguage);
+            for (int i = 0; i < IM_ARRAYSIZE(commonLangs); ++i)
+            {
+                if (langUtf8 == commonLangs[i])
+                {
+                    langIdx = i;
+                    break;
+                }
+            }
+            ImGui::SetNextItemWidth(180.0f);
+            if (ImGui::Combo("Target Lang", &langIdx, commonLangs, IM_ARRAYSIZE(commonLangs)))
+            {
+                m_config.targetLanguage = Utf8ToWide(commonLangs[langIdx]);
+            }
+
+            if (m_config.providerType == TranslateProvider::DeepSeek)
+            {
+                ImGui::SetNextItemWidth(180.0f);
+                ImGui::InputText("API Model", m_apiModelBuf, sizeof(m_apiModelBuf));
+                
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(250.0f);
+                ImGui::InputText("API Key", m_apiKeyBuf, sizeof(m_apiKeyBuf), ImGuiInputTextFlags_Password);
+            }
+
+            ImGui::Spacing();
+            if (ImGui::Button("Test Connection", ImVec2(150, 0)))
+            {
+                OnTestApi();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Save Settings", ImVec2(150, 0)))
+            {
+                OnSave();
+            }
+
+            ImGui::EndTabItem();
+        }
+
+        // ----------------- SYSTEM TAB -----------------
+        if (ImGui::BeginTabItem("System"))
+        {
+            ImGui::TextDisabled("System Hotkeys");
+            
+            std::string toggleStr = m_recordingHotkeyType == 3 ? "Press a key..." : WideToUtf8(HotkeyToString(m_config.toggleWndVk, m_config.toggleWndMod));
+            ImGui::Text("Toggle Settings Window:");
+            if (ImGui::Button(toggleStr.c_str(), ImVec2(150, 0)))
+            {
+                m_recordingHotkeyType = 3;
+            }
+
+            ImGui::Text("OCR Engine:");
+            const char* ocrOptions[] = { "PaddleOCR", "Windows OCR (Default)" };
+            int currentOcr = (m_config.ocrType == OcrType::PaddleOCR) ? 0 : 1;
+            ImGui::SetNextItemWidth(260.0f);
+            if (ImGui::Combo("OCR Provider", &currentOcr, ocrOptions, IM_ARRAYSIZE(ocrOptions)))
+            {
+                m_config.ocrType = (currentOcr == 0) ? OcrType::PaddleOCR : OcrType::WindowsOCR;
+            }
+
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
     }
-    cy += EH + 8;
 
-    // API Model
-    h = MakeLabel(x + 8, cy, 75, LH, L"API Model:", IDC_STATIC_API_MODEL);
-    m_translateControls.push_back(h);
-    h = MakeEdit(x + 85, cy, 160, EH, IDC_API_MODEL_EDIT);
-    m_translateControls.push_back(h);
-    cy += EH + 8;
+    ImGui::Separator();
 
-    // API Key
-    h = MakeLabel(x + 8, cy, 75, LH, L"API Key:", IDC_STATIC_API_KEY);
-    m_translateControls.push_back(h);
-    h = MakeEdit(x + 85, cy, w - 95, EH, IDC_API_KEY_EDIT);
-    m_translateControls.push_back(h);
-    cy += EH + 8;
-
-    // Test + Save buttons
-    h = MakeButton(x + 8, cy, 120, BH, L"Test Connection", IDC_TEST_API_BTN);
-    m_translateControls.push_back(h);
-    h = MakeButton(x + 138, cy, 120, BH, L"Save Settings", IDC_SAVE_BTN);
-    m_translateControls.push_back(h);
-}
-
-void SettingsWindow::CreateSystemTab(int x, int y, int w)
-{
-    const int LH = 22;
-    const int EH = 24;
-    HWND h;
-
-    int cy = y + 4;
-
-    // -- System Hotkeys group --------------------------------------------------
-    h = MakeGroup(x, cy, w, 100, L"  System Hotkeys  ");
-    m_systemControls.push_back(h);
-    cy += 18;
-
-    h = MakeLabel(x + 8, cy, 180, LH, L"Toggle Settings Window:");
-    m_systemControls.push_back(h);
-
-    h = MakeEdit(x + 195, cy, 140, EH, IDC_TOGGLE_WND_HOTKEY_EDIT);
-    SetWindowTextW(h, L"Ctrl + Shift + O");
-    SetWindowSubclass(h, HotkeyEditSubclassProc, IDC_TOGGLE_WND_HOTKEY_EDIT, reinterpret_cast<DWORD_PTR>(this));
-    m_systemControls.push_back(h);
-
-    // -- OCR Engine group ------------------------------------------------------
-    cy += 92;
-    h = MakeGroup(x, cy, w, 80, L"  OCR Engine  ");
-    m_systemControls.push_back(h);
-    cy += 18;
-
-    h = MakeLabel(x + 8, cy, 120, LH, L"OCR Provider:");
-    m_systemControls.push_back(h);
-
-    h = MakeCombo(x + 135, cy, 180, 150, IDC_OCR_COMBO);
-    SendMessageW(h, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"PaddleOCR"));
-    SendMessageW(h, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Windows OCR (Default)"));
-    m_systemControls.push_back(h);
-
-}
-
-// -----------------------------------------------------------------------------
-//  CreateRegionTab — Region selection hotkey
-// -----------------------------------------------------------------------------
-
-void SettingsWindow::CreateRegionTab(int x, int y, int w)
-{
-    const int LH = 22;
-    const int EH = 24;
-    HWND h;
-
-    int cy = y + 4;
-
-    // -- Region Selection group ------------------------------------------------
-    h = MakeGroup(x, cy, w, 120, L"  Region Selection  ");
-    m_regionControls.push_back(h);
-    cy += 18;
-
-    h = MakeLabel(x + 8, cy, w - 16, LH,
-        L"Press the hotkey to select a screen region for quick translation.");
-    m_regionControls.push_back(h);
-    cy += LH + 8;
-
-    h = MakeLabel(x + 8, cy, 120, LH, L"Selection Hotkey:");
-    m_regionControls.push_back(h);
-
-    h = MakeEdit(x + 135, cy, 150, EH, IDC_REGION_HOTKEY_EDIT);
-    SetWindowTextW(h, L"Ctrl + M");
-    SetWindowSubclass(h, HotkeyEditSubclassProc, IDC_REGION_HOTKEY_EDIT, reinterpret_cast<DWORD_PTR>(this));
-    m_regionControls.push_back(h);
-    cy += EH + 10;
-
-    h = MakeLabel(x + 8, cy, w - 16, LH * 2,
-        L"After selecting a region, the app will OCR and translate the text. "
-        L"Press any key to dismiss the result.");
-    m_regionControls.push_back(h);
-}
-
-// -----------------------------------------------------------------------------
-//  Tab switching
-// -----------------------------------------------------------------------------
-
-void SettingsWindow::OnTabChanged()
-{
-    int sel = TabCtrl_GetCurSel(m_tabCtrl);
-    if (sel >= 0) ShowTab(sel);
-}
-
-void SettingsWindow::ShowTab(int index)
-{
-    m_currentTab = index;
-
-    // Tab 0 = Realtime, Tab 1 = Region, Tab 2 = Translate, Tab 3 = System
-    int showRealtime  = (index == 0) ? SW_SHOW : SW_HIDE;
-    int showRegion    = (index == 1) ? SW_SHOW : SW_HIDE;
-    int showTranslate = (index == 2) ? SW_SHOW : SW_HIDE;
-    int showSystem    = (index == 3) ? SW_SHOW : SW_HIDE;
-
-    for (HWND h : m_realtimeControls)
-        ShowWindow(h, showRealtime);
-
-    for (HWND h : m_translateControls)
-        ShowWindow(h, showTranslate);
-
-    for (HWND h : m_regionControls)
-        ShowWindow(h, showRegion);
-
-    for (HWND h : m_systemControls)
-        ShowWindow(h, showSystem);
-
-    // If showing Realtime tab, restore conditional visibility
-    if (index == 0)
+    // Start / Stop buttons
+    if (m_running)
     {
-        UpdateCaptureModeUI();
-        UpdateDisplayModeUI(); // keep overlay-only controls hidden when in InPlace mode
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
+        ImGui::Button("START", ImVec2(120, 0));
+        ImGui::PopStyleColor(3);
+    }
+    else
+    {
+        if (ImGui::Button("START", ImVec2(120, 0)))
+        {
+            OnStart();
+        }
     }
 
-    // If showing Translate tab, restore conditional visibility
-    if (index == 2)
-        UpdateProviderUI(); // keep API Key/Model hidden when Google Translate is selected
+    ImGui::SameLine(ImGui::GetWindowWidth() - 140.0f);
+
+    if (!m_running)
+    {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
+        ImGui::Button("STOP", ImVec2(120, 0));
+        ImGui::PopStyleColor(3);
+    }
+    else
+    {
+        if (ImGui::Button("STOP", ImVec2(120, 0)))
+        {
+            OnStop();
+        }
+    }
+
+    ImGui::Spacing();
+    ImGui::TextDisabled("Output Log");
+    
+    ImGui::BeginChild("LogArea", ImVec2(0, -10), true);
+    for (const auto& log : m_logs)
+    {
+        ImGui::TextUnformatted(WideToUtf8(log).c_str());
+    }
+    if (m_scrollToBottom)
+    {
+        ImGui::SetScrollHereY(1.0f);
+        m_scrollToBottom = false;
+    }
+    ImGui::EndChild();
+
+    ImGui::End();
+}
+
+void SettingsWindow::ApplyImGuiStyle()
+{
+    ImGuiStyle& style = ImGui::GetStyle();
+    
+    style.WindowRounding = 8.0f;
+    style.FrameRounding = 6.0f;
+    style.GrabRounding = 4.0f;
+    style.PopupRounding = 6.0f;
+    style.ScrollbarRounding = 6.0f;
+    style.TabRounding = 6.0f;
+    
+    style.WindowPadding = ImVec2(16.0f, 16.0f);
+    style.FramePadding = ImVec2(10.0f, 8.0f);
+    style.ItemSpacing = ImVec2(12.0f, 10.0f);
+    style.ItemInnerSpacing = ImVec2(8.0f, 6.0f);
+    
+    style.WindowBorderSize = 1.0f;
+    style.FrameBorderSize = 0.0f;
+    style.PopupBorderSize = 1.0f;
+    
+    ImVec4* colors = style.Colors;
+    colors[ImGuiCol_Text]                   = ImVec4(0.95f, 0.96f, 0.98f, 1.00f);
+    colors[ImGuiCol_TextDisabled]           = ImVec4(0.50f, 0.50f, 0.50f, 1.00f);
+    colors[ImGuiCol_WindowBg]               = ImVec4(0.11f, 0.11f, 0.13f, 1.00f);
+    colors[ImGuiCol_ChildBg]                = ImVec4(0.14f, 0.14f, 0.16f, 0.80f);
+    colors[ImGuiCol_PopupBg]                = ImVec4(0.11f, 0.11f, 0.13f, 0.95f);
+    colors[ImGuiCol_Border]                 = ImVec4(0.25f, 0.25f, 0.28f, 1.00f);
+    colors[ImGuiCol_BorderShadow]           = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    
+    colors[ImGuiCol_FrameBg]                = ImVec4(0.18f, 0.18f, 0.21f, 1.00f);
+    colors[ImGuiCol_FrameBgHovered]         = ImVec4(0.24f, 0.24f, 0.28f, 1.00f);
+    colors[ImGuiCol_FrameBgActive]          = ImVec4(0.30f, 0.30f, 0.35f, 1.00f);
+    
+    colors[ImGuiCol_TitleBg]                = ImVec4(0.11f, 0.11f, 0.13f, 1.00f);
+    colors[ImGuiCol_TitleBgActive]          = ImVec4(0.16f, 0.16f, 0.20f, 1.00f);
+    colors[ImGuiCol_TitleBgCollapsed]       = ImVec4(0.11f, 0.11f, 0.13f, 1.00f);
+    
+    colors[ImGuiCol_MenuBarBg]              = ImVec4(0.14f, 0.14f, 0.16f, 1.00f);
+    colors[ImGuiCol_ScrollbarBg]            = ImVec4(0.14f, 0.14f, 0.16f, 1.00f);
+    colors[ImGuiCol_ScrollbarGrab]          = ImVec4(0.24f, 0.24f, 0.28f, 1.00f);
+    colors[ImGuiCol_ScrollbarGrabHovered]   = ImVec4(0.30f, 0.30f, 0.35f, 1.00f);
+    colors[ImGuiCol_ScrollbarGrabActive]    = ImVec4(0.38f, 0.38f, 0.44f, 1.00f);
+    
+    colors[ImGuiCol_CheckMark]              = ImVec4(0.48f, 0.40f, 0.92f, 1.00f);
+    colors[ImGuiCol_SliderGrab]             = ImVec4(0.48f, 0.40f, 0.92f, 1.00f);
+    colors[ImGuiCol_SliderGrabActive]       = ImVec4(0.60f, 0.52f, 0.98f, 1.00f);
+    
+    colors[ImGuiCol_Button]                 = ImVec4(0.24f, 0.22f, 0.33f, 1.00f);
+    colors[ImGuiCol_ButtonHovered]          = ImVec4(0.48f, 0.40f, 0.92f, 1.00f);
+    colors[ImGuiCol_ButtonActive]           = ImVec4(0.60f, 0.52f, 0.98f, 1.00f);
+    
+    colors[ImGuiCol_Header]                 = ImVec4(0.24f, 0.22f, 0.33f, 1.00f);
+    colors[ImGuiCol_HeaderHovered]          = ImVec4(0.48f, 0.40f, 0.92f, 1.00f);
+    colors[ImGuiCol_HeaderActive]           = ImVec4(0.60f, 0.52f, 0.98f, 1.00f);
+    
+    colors[ImGuiCol_Separator]              = ImVec4(0.25f, 0.25f, 0.28f, 1.00f);
+    colors[ImGuiCol_SeparatorHovered]       = ImVec4(0.48f, 0.40f, 0.92f, 1.00f);
+    colors[ImGuiCol_SeparatorActive]        = ImVec4(0.60f, 0.52f, 0.98f, 1.00f);
+    
+    colors[ImGuiCol_ResizeGrip]             = ImVec4(0.24f, 0.22f, 0.33f, 1.00f);
+    colors[ImGuiCol_ResizeGripHovered]      = ImVec4(0.48f, 0.40f, 0.92f, 1.00f);
+    colors[ImGuiCol_ResizeGripActive]       = ImVec4(0.60f, 0.52f, 0.98f, 1.00f);
+    
+    colors[ImGuiCol_Tab]                    = ImVec4(0.18f, 0.18f, 0.21f, 1.00f);
+    colors[ImGuiCol_TabHovered]             = ImVec4(0.48f, 0.40f, 0.92f, 1.00f);
+    colors[ImGuiCol_TabActive]              = ImVec4(0.24f, 0.22f, 0.33f, 1.00f);
+    colors[ImGuiCol_TabUnfocused]           = ImVec4(0.18f, 0.18f, 0.21f, 1.00f);
+    colors[ImGuiCol_TabUnfocusedActive]     = ImVec4(0.24f, 0.22f, 0.33f, 1.00f);
+}
+
+void SettingsWindow::LoadFonts()
+{
+    ImGuiIO& io = ImGui::GetIO();
+    ImFontConfig config;
+    config.OversampleH = 2;
+    config.OversampleV = 2;
+    ImFont* font = io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\segoeui.ttf", 18.0f * m_dpiScale, &config, io.Fonts->GetGlyphRangesVietnamese());
+    if (!font)
+    {
+        font = io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\arial.ttf", 18.0f * m_dpiScale, &config, io.Fonts->GetGlyphRangesVietnamese());
+    }
+    if (!font)
+    {
+        io.Fonts->AddFontDefault();
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -898,25 +1050,12 @@ void SettingsWindow::ShowTab(int index)
 
 void SettingsWindow::OnCaptureModeChanged()
 {
-    UpdateCaptureModeUI();
+    // No explicit UI updates required for immediate-mode ImGui
 }
 
-void SettingsWindow::UpdateCaptureModeUI()
-{
-    HWND hMode = GetDlgItem(m_hwnd, IDC_CAPTURE_MODE_COMBO);
-    int sel = static_cast<int>(SendMessageW(hMode, CB_GETCURSEL, 0, 0));
-    bool isAuto = (sel == 0);
-
-    for (HWND h : m_autoModeControls)
-        ShowWindow(h, isAuto ? SW_SHOW : SW_HIDE);
-
-    for (HWND h : m_hotkeyModeControls)
-        ShowWindow(h, isAuto ? SW_HIDE : SW_SHOW);
-}
 void SettingsWindow::OnDisplayModeChanged()
 {
     UIToConfig();
-    UpdateDisplayModeUI();
     SyncHelperWindows();
 
     if (m_running)
@@ -939,54 +1078,10 @@ void SettingsWindow::OnDisplayModeChanged()
     }
 }
 
-void SettingsWindow::UpdateDisplayModeUI()
-{
-    HWND hDisp = GetDlgItem(m_hwnd, IDC_DISPLAY_MODE_COMBO);
-    int sel = static_cast<int>(SendMessageW(hDisp, CB_GETCURSEL, 0, 0));
-    bool isInPlace = (sel == 0);
-
-    for (HWND h : m_overlayPosControls)
-        EnableWindow(h, !isInPlace);
-
-    InvalidateRect(m_hwnd, nullptr, TRUE);
-}
-void SettingsWindow::UpdateProviderUI()
-{
-    HWND hProv = GetDlgItem(m_hwnd, IDC_PROVIDER_COMBO);
-    int idx = static_cast<int>(SendMessageW(hProv, CB_GETCURSEL, 0, 0));
-    TranslateProvider provider = (idx == 0) ? TranslateProvider::DeepSeek : TranslateProvider::Google;
-
-    ProviderUIConfig uiConfig = TranslateProviderFactory::GetUIConfig(provider);
-
-    int cmdModel = uiConfig.showApiModel ? SW_SHOW : SW_HIDE;
-    ShowWindow(GetDlgItem(m_hwnd, IDC_STATIC_API_MODEL), cmdModel);
-    ShowWindow(GetDlgItem(m_hwnd, IDC_API_MODEL_EDIT), cmdModel);
-
-    int cmdKey = uiConfig.showApiKey ? SW_SHOW : SW_HIDE;
-    ShowWindow(GetDlgItem(m_hwnd, IDC_STATIC_API_KEY), cmdKey);
-    ShowWindow(GetDlgItem(m_hwnd, IDC_API_KEY_EDIT), cmdKey);
-
-    InvalidateRect(m_hwnd, nullptr, TRUE);
-}
-void SettingsWindow::UpdateRoiUI()
-{
-    HWND hCheck = GetDlgItem(m_hwnd, IDC_ROI_ACTIVE_CHECK);
-    bool active = (SendMessageW(hCheck, BM_GETCHECK, 0, 0) == BST_CHECKED);
-    EnableWindow(GetDlgItem(m_hwnd, IDC_ROI_TIMEOUT_EDIT), active);
-    m_captureHelper.ShowRoi(active && m_captureHelper.IsVisible());
-}
-void SettingsWindow::UpdateRoiLabel()
-{
-    RECT rc = m_captureHelper.GetRoiRect();
-    wchar_t buf[128]{};
-    swprintf(buf, 128, L"%ld, %ld, %ld, %ld", rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top);
-    SetDlgItemTextW(m_hwnd, IDC_ROI_RECT_LABEL, buf);
-}
 void SettingsWindow::OnRoiActiveChanged()
 {
     m_captureHelper.CenterRoi();
-    UpdateRoiUI();
-    UpdateRoiLabel();
+    m_captureHelper.ShowRoi(m_config.roiActive && m_captureHelper.IsVisible());
 }
 
 // -----------------------------------------------------------------------------
@@ -995,72 +1090,14 @@ void SettingsWindow::OnRoiActiveChanged()
 
 void SettingsWindow::ConfigToUI()
 {
-    // Provider — set selection first, then immediately update visibility of API fields
-    HWND hProv = GetDlgItem(m_hwnd, IDC_PROVIDER_COMBO);
-    SendMessageW(hProv, CB_SETCURSEL,
-        (m_config.providerType == TranslateProvider::DeepSeek) ? 0 : 1, 0);
-    UpdateProviderUI(); // apply hide/show of API Key/Model right after selecting provider
+    strcpy_s(m_apiModelBuf, WideToUtf8(m_config.apiModel).c_str());
+    strcpy_s(m_apiKeyBuf, WideToUtf8(m_config.apiKey).c_str());
+    strcpy_s(m_fontNameBuf, WideToUtf8(m_config.fontName).c_str());
 
-    // OCR Type
-    HWND hOcr = GetDlgItem(m_hwnd, IDC_OCR_COMBO);
-    SendMessageW(hOcr, CB_SETCURSEL, (m_config.ocrType == OcrType::PaddleOCR) ? 0 : 1, 0);
+    ColorrefToFloat(m_config.textColor, m_textColorFloat);
+    ColorrefToFloat(m_config.shadowColor, m_shadowColorFloat);
+    ColorrefToFloat(m_config.strokeColor, m_strokeColorFloat);
 
-    SetDlgItemTextW(m_hwnd, IDC_API_MODEL_EDIT, m_config.apiModel.c_str());
-    SetDlgItemTextW(m_hwnd, IDC_API_KEY_EDIT, m_config.apiKey.c_str());
-    SetDlgItemTextW(m_hwnd, IDC_LANGUAGE_COMBO, m_config.targetLanguage.c_str());
-
-    // Monitor combo
-    HWND hMon = GetDlgItem(m_hwnd, IDC_MONITOR_COMBO);
-    SendMessageW(hMon, CB_SETCURSEL,
-        std::min(m_config.monitorIndex, 2), 0);
-
-    // Capture mode
-    HWND hMode = GetDlgItem(m_hwnd, IDC_CAPTURE_MODE_COMBO);
-    SendMessageW(hMode, CB_SETCURSEL, static_cast<int>(m_config.captureMode), 0);
-
-    // Display Mode
-    HWND hDisp = GetDlgItem(m_hwnd, IDC_DISPLAY_MODE_COMBO);
-    SendMessageW(hDisp, CB_SETCURSEL, (m_config.displayMode == DisplayMode::InPlace) ? 0 : 1, 0);
-
-    // Interval
-    SetDlgItemInt(m_hwnd, IDC_INTERVAL_EDIT,
-        static_cast<UINT>(m_config.captureIntervalMs), FALSE);
-
-    // Scale ROI
-    SetDlgItemInt(m_hwnd, IDC_SCALE_ROI_EDIT,
-        static_cast<UINT>(m_config.scaleRoi), FALSE);
-
-    // Hotkey
-    SetDlgItemTextW(m_hwnd, IDC_HOTKEY_EDIT, HotkeyToString(m_config.hotkeyVk, m_config.hotkeyMod).c_str());
-    SetDlgItemTextW(m_hwnd, IDC_PAUSE_HOTKEY_EDIT, HotkeyToString(m_config.pauseHotkeyVk, m_config.pauseHotkeyMod).c_str());
-    SetDlgItemTextW(m_hwnd, IDC_TOGGLE_WND_HOTKEY_EDIT, HotkeyToString(m_config.toggleWndVk, m_config.toggleWndMod).c_str());
-    SetDlgItemTextW(m_hwnd, IDC_REGION_HOTKEY_EDIT, HotkeyToString(m_config.regionHotkeyVk, m_config.regionHotkeyMod).c_str());
-
-    UpdateCaptureModeUI();
-
-    {
-        wchar_t posBuf[64]{};
-        swprintf(posBuf, 64, L"X: %ld   Y: %ld",
-            m_config.overlayPos.x, m_config.overlayPos.y);
-        SetDlgItemTextW(m_hwnd, IDC_OVERLAY_POS_LABEL, posBuf);
-    }
-
-    SetDlgItemTextW(m_hwnd, IDC_FONT_NAME_EDIT, m_config.fontName.c_str());
-    SetDlgItemInt(m_hwnd, IDC_FONT_SIZE_EDIT,
-        static_cast<UINT>(m_config.fontSize), FALSE);
-
-    CheckDlgButton(m_hwnd, IDC_SHADOW_CHECK,
-        m_config.shadowEnabled ? BST_CHECKED : BST_UNCHECKED);
-    CheckDlgButton(m_hwnd, IDC_STROKE_CHECK,
-        m_config.strokeEnabled ? BST_CHECKED : BST_UNCHECKED);
-
-    UpdateRegionLabel();
-    UpdateDisplayModeUI(); // apply hide/show of overlay-only controls based on display mode
-
-    CheckDlgButton(m_hwnd, IDC_ROI_ACTIVE_CHECK,
-        m_config.roiActive ? BST_CHECKED : BST_UNCHECKED);
-    SetDlgItemInt(m_hwnd, IDC_ROI_TIMEOUT_EDIT,
-        static_cast<UINT>(m_config.roiTimeoutMs), FALSE);
     if ((m_config.roiRect.right - m_config.roiRect.left <= 0) || (m_config.roiRect.bottom - m_config.roiRect.top <= 0))
     {
         m_captureHelper.CenterRoi();
@@ -1070,389 +1107,206 @@ void SettingsWindow::ConfigToUI()
     {
         m_captureHelper.SetRoiRect(m_config.roiRect);
     }
-    UpdateRoiUI();
-    UpdateRoiLabel();
+    m_captureHelper.ShowRoi(m_config.roiActive && m_captureHelper.IsVisible());
 }
 
 void SettingsWindow::UIToConfig()
 {
-    wchar_t buf[1024]{};
-    DisplayMode oldMode = m_config.displayMode;
+    m_config.apiModel = Utf8ToWide(m_apiModelBuf);
+    m_config.apiKey = Utf8ToWide(m_apiKeyBuf);
+    m_config.fontName = Utf8ToWide(m_fontNameBuf);
 
-    // Provider type
-    {
-        HWND hProv = GetDlgItem(m_hwnd, IDC_PROVIDER_COMBO);
-        int idx = static_cast<int>(SendMessageW(hProv, CB_GETCURSEL, 0, 0));
-        m_config.providerType = (idx == 0) ? TranslateProvider::DeepSeek : TranslateProvider::Google;
+    m_config.textColor = FloatToColorref(m_textColorFloat);
+    m_config.shadowColor = FloatToColorref(m_shadowColorFloat);
+    m_config.strokeColor = FloatToColorref(m_strokeColorFloat);
 
-        HWND hOcr = GetDlgItem(m_hwnd, IDC_OCR_COMBO);
-        int ocrIdx = static_cast<int>(SendMessageW(hOcr, CB_GETCURSEL, 0, 0));
-        m_config.ocrType = (ocrIdx == 0) ? OcrType::PaddleOCR : OcrType::WindowsOCR;
-
-        HWND hDisp = GetDlgItem(m_hwnd, IDC_DISPLAY_MODE_COMBO);
-        int dispIdx = static_cast<int>(SendMessageW(hDisp, CB_GETCURSEL, 0, 0));
-        m_config.displayMode = (dispIdx == 0) ? DisplayMode::InPlace : DisplayMode::Overlay;
-    }
-
-    GetDlgItemTextW(m_hwnd, IDC_API_MODEL_EDIT, buf, 1024);
-    m_config.apiModel = buf;
-
-    GetDlgItemTextW(m_hwnd, IDC_API_KEY_EDIT, buf, 1024);
-    m_config.apiKey = buf;
-
-    GetDlgItemTextW(m_hwnd, IDC_LANGUAGE_COMBO, buf, 64);
-    m_config.targetLanguage = buf;
-    if (m_config.targetLanguage.empty()) m_config.targetLanguage = L"Vietnamese";
-
-    HWND hMon = GetDlgItem(m_hwnd, IDC_MONITOR_COMBO);
-    m_config.monitorIndex = static_cast<int>(SendMessageW(hMon, CB_GETCURSEL, 0, 0));
-
-    // Capture mode
-    HWND hMode = GetDlgItem(m_hwnd, IDC_CAPTURE_MODE_COMBO);
-    m_config.captureMode = static_cast<CaptureMode>(SendMessageW(hMode, CB_GETCURSEL, 0, 0));
-
-    // Interval
-    BOOL ok{};
-    m_config.captureIntervalMs = static_cast<int>(
-        GetDlgItemInt(m_hwnd, IDC_INTERVAL_EDIT, &ok, FALSE));
-    if (m_config.captureIntervalMs <= 0) m_config.captureIntervalMs = 1000;
-
-    // Scale ROI
-    m_config.scaleRoi = static_cast<int>(
-        GetDlgItemInt(m_hwnd, IDC_SCALE_ROI_EDIT, &ok, FALSE));
-    if (m_config.scaleRoi <= 0) m_config.scaleRoi = 100;
-
-    // Hotkey: m_config.hotkeyVk and m_config.hotkeyMod are updated directly in real time by the subclass proc.
-
-    if (m_config.displayMode == DisplayMode::Overlay && oldMode == DisplayMode::Overlay)
-    {
-        // Position is read directly from the overlay window (set by drag)
-        int ox, oy;
-        m_overlay.GetPosition(ox, oy);
-        m_config.overlayPos = { static_cast<LONG>(ox), static_cast<LONG>(oy) };
-
-        int ow, oh;
-        m_overlay.GetSize(ow, oh);
-        m_config.overlayWidth = ow;
-        m_config.overlayHeight = oh;
-    }
-
-    GetDlgItemTextW(m_hwnd, IDC_FONT_NAME_EDIT, buf, 256);
-    m_config.fontName = buf;
-    m_config.fontSize = static_cast<int>(
-        GetDlgItemInt(m_hwnd, IDC_FONT_SIZE_EDIT, &ok, FALSE));
-    if (m_config.fontSize <= 0) m_config.fontSize = 24;
-
-    m_config.shadowEnabled =
-        (IsDlgButtonChecked(m_hwnd, IDC_SHADOW_CHECK) == BST_CHECKED);
-    m_config.strokeEnabled =
-        (IsDlgButtonChecked(m_hwnd, IDC_STROKE_CHECK) == BST_CHECKED);
-
-    m_config.roiActive = (IsDlgButtonChecked(m_hwnd, IDC_ROI_ACTIVE_CHECK) == BST_CHECKED);
-    m_config.roiTimeoutMs = static_cast<int>(GetDlgItemInt(m_hwnd, IDC_ROI_TIMEOUT_EDIT, &ok, FALSE));
-    if (m_config.roiTimeoutMs <= 0) m_config.roiTimeoutMs = 3000;
     m_config.roiRect = m_captureHelper.GetRoiRect();
 }
 
-void SettingsWindow::UpdateRegionLabel()
+std::wstring SettingsWindow::GetRegionInfoText() const
 {
-    wchar_t buf[128]{};
     if (m_config.captureSet)
     {
+        wchar_t buf[128]{};
         swprintf(buf, 128,
-            L"(%ld,%ld) \u2013 (%ld,%ld)  [%ldx%ld]",
+            L"(%ld,%ld) - (%ld,%ld)  [%ldx%ld]",
             m_config.captureRect.left, m_config.captureRect.top,
             m_config.captureRect.right, m_config.captureRect.bottom,
             m_config.captureRect.right - m_config.captureRect.left,
             m_config.captureRect.bottom - m_config.captureRect.top);
+        return buf;
     }
-    else
-    {
-        wcscpy(buf, L"(not set)");
-    }
-    SetDlgItemTextW(m_hwnd, IDC_REGION_INFO, buf);
+    return L"(not set)";
 }
 
 void SettingsWindow::UpdateStatus(const std::wstring& text)
 {
-    // Do not log when window is minimized or hidden/closed to system tray
-    if (IsIconic(m_hwnd) || !IsWindowVisible(m_hwnd))
-    {
-        return;
-    }
-
-    // Limit log message length to prevent layout/buffer issues, truncate with "..." if too long
     std::wstring dispText = text;
     if (dispText.size() > 120)
     {
         dispText = dispText.substr(0, 117) + L"...";
     }
 
-    HWND hEdit = GetDlgItem(m_hwnd, IDC_STATUS_EDIT);
-    // Append with timestamp
     SYSTEMTIME st{};
     GetLocalTime(&st);
     wchar_t line[512]{};
-    swprintf_s(line, 512, L"[%02d:%02d:%02d] %ls\r\n",
+    swprintf_s(line, 512, L"[%02d:%02d:%02d] %ls",
         st.wHour, st.wMinute, st.wSecond, dispText.c_str());
 
-    int len = GetWindowTextLengthW(hEdit);
-    SendMessageW(hEdit, EM_SETSEL, len, len);
-    SendMessageW(hEdit, EM_REPLACESEL, FALSE,
-        reinterpret_cast<LPARAM>(line));
-    // Auto-scroll to bottom
-    SendMessageW(hEdit, WM_VSCROLL, SB_BOTTOM, 0);
+    m_logs.push_back(line);
+    if (m_logs.size() > 500)
+    {
+        m_logs.erase(m_logs.begin());
+    }
+    m_scrollToBottom = true;
 }
 
 // -----------------------------------------------------------------------------
-//  VK to display name helper
+//  Command handlers
 // -----------------------------------------------------------------------------
 
-std::wstring SettingsWindow::VkToName(UINT vk)
+void SettingsWindow::OnStart()
 {
-    switch (vk)
+    if (m_running) return;
+
+    UIToConfig();
+
+    if (!m_config.captureSet)
     {
-    case VK_SPACE: return L"Space";
-    case VK_RETURN: return L"Enter";
-    case VK_TAB: return L"Tab";
-    case VK_ESCAPE: return L"Esc";
-    case VK_BACK: return L"Backspace";
-    case VK_DELETE: return L"Delete";
-    case VK_INSERT: return L"Insert";
-    case VK_HOME: return L"Home";
-    case VK_END: return L"End";
-    case VK_PRIOR: return L"PageUp";
-    case VK_NEXT: return L"PageDown";
-    case VK_LEFT: return L"Left";
-    case VK_UP: return L"Up";
-    case VK_RIGHT: return L"Right";
-    case VK_DOWN: return L"Down";
-    case VK_SNAPSHOT: return L"PrintScreen";
-    case VK_SCROLL: return L"ScrollLock";
-    case VK_PAUSE: return L"Pause";
-    case VK_CAPITAL: return L"CapsLock";
-    case VK_NUMLOCK: return L"NumLock";
+        MessageBoxW(m_hwnd, L"Please select a capture region first.", L"No Region Set", MB_ICONWARNING);
+        return;
     }
 
-    if (vk >= VK_F1 && vk <= VK_F24)
-        return L"F" + std::to_wstring(vk - VK_F1 + 1);
-    if (vk >= 'A' && vk <= 'Z')
-        return std::wstring(1, static_cast<wchar_t>(vk));
-    if (vk >= '0' && vk <= '9')
-        return std::wstring(1, static_cast<wchar_t>(vk));
+    m_controller->GetConfig() = m_config;
 
-    UINT scanCode = MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
-    LONG lParam = scanCode << 16;
-    switch (vk)
+    if (!m_controller->Start(m_hwnd, &m_overlay))
     {
-    case VK_INSERT:
-    case VK_DELETE:
-    case VK_HOME:
-    case VK_END:
-    case VK_PRIOR:
-    case VK_NEXT:
-    case VK_LEFT:
-    case VK_UP:
-    case VK_RIGHT:
-    case VK_DOWN:
-    case VK_DIVIDE:
-    case VK_NUMLOCK:
-        lParam |= 0x01000000;
-        break;
+        MessageBoxW(m_hwnd, (L"Start failed:\n" + m_controller->GetLastError()).c_str(), L"Error", MB_ICONERROR);
+        return;
     }
 
-    wchar_t name[64]{};
-    if (GetKeyNameTextW(lParam, name, 64) > 0)
+    m_captureHelper.Show(false);
+    m_overlay.EnableDrag(false);
+
+    m_overlay.SetFontName(m_config.fontName);
+    m_overlay.SetFontSize(m_config.fontSize);
+    m_overlay.SetTextColor(m_config.textColor);
+    m_overlay.SetShadowColor(m_config.shadowColor);
+    m_overlay.SetShadowEnabled(m_config.shadowEnabled);
+    m_overlay.SetStrokeColor(m_config.strokeColor);
+    m_overlay.SetStrokeEnabled(m_config.strokeEnabled);
+    m_overlay.SetStrokeWidth(m_config.strokeWidth);
+
+    if (m_config.displayMode == DisplayMode::InPlace)
     {
-        return name;
+        m_overlay.SetPosition(m_config.captureRect.left, m_config.captureRect.top);
+        m_overlay.SetSize(m_config.captureRect.right - m_config.captureRect.left,
+                          m_config.captureRect.bottom - m_config.captureRect.top);
+        m_overlay.SetInPlaceText(L"", {});
+    }
+    else
+    {
+        m_overlay.SetPosition(m_config.overlayPos.x, m_config.overlayPos.y);
+        m_overlay.SetSize(m_config.overlayWidth, m_config.overlayHeight);
+        m_overlay.SetText(L"");
+    }
+    m_overlay.Show();
+
+    if (m_config.captureMode == CaptureMode::Auto)
+    {
+        RegisterPauseHotkey();
+        UpdateStatus(L"Started (Auto mode, interval: " + std::to_wstring(m_config.captureIntervalMs) + L"ms).");
+    }
+    else
+    {
+        RegisterCaptureHotkey();
+        UpdateStatus(L"Started (Hotkey mode: " + HotkeyToString(m_config.hotkeyVk, m_config.hotkeyMod) + L").");
     }
 
-    return L"VK_" + std::to_wstring(vk);
+    m_running = true;
+
+    ShowWindow(m_hwnd, SW_MINIMIZE);
 }
 
-std::wstring SettingsWindow::HotkeyToString(UINT vk, UINT mod)
+void SettingsWindow::OnStop()
 {
-    if (vk == 0) return L"None";
-    std::wstring s;
-    if (mod & MOD_CONTROL) s += L"Ctrl + ";
-    if (mod & MOD_SHIFT)   s += L"Shift + ";
-    if (mod & MOD_ALT)     s += L"Alt + ";
-    if (mod & MOD_WIN)     s += L"Win + ";
-    s += VkToName(vk);
-    return s;
+    if (!m_running) return;
+
+    UnregisterCaptureHotkey();
+    UnregisterPauseHotkey();
+    m_controller->Stop();
+
+    m_running = false;
+    UpdateStatus(L"Stopped.");
+
+    SyncHelperWindows();
 }
 
-LRESULT CALLBACK SettingsWindow::HotkeyEditSubclassProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData)
+void SettingsWindow::OnSelectRegion()
 {
-    auto* pThis = reinterpret_cast<SettingsWindow*>(dwRefData);
-    if (!pThis)
-        return DefSubclassProc(hWnd, uMsg, wParam, lParam);
+    int sw = GetSystemMetrics(SM_CXSCREEN);
+    int sh = GetSystemMetrics(SM_CYSCREEN);
+    RECT rc = { (sw - 800) / 2, (sh - 150) / 2, (sw + 800) / 2, (sh + 150) / 2 };
+    m_captureHelper.SetRect(rc);
+    m_config.captureRect = rc;
+    m_config.captureSet = true;
+    UpdateStatus(L"Capture region reset to screen center.");
+}
 
-    switch (uMsg)
+void SettingsWindow::OnTestApi()
+{
+    UIToConfig();
+    UpdateStatus(L"Testing connection...");
+
+    auto tc = TranslateProviderFactory::CreateProvider(m_config.providerType);
+    if (!tc)
     {
-    case WM_GETDLGCODE:
-        return DLGC_WANTALLKEYS;
+        UpdateStatus(L"API Test failed: Invalid translate provider.");
+        return;
+    }
+    tc->SetApiKey(m_config.apiKey);
+    tc->SetApiModel(m_config.apiModel);
+    tc->SetTargetLanguage(m_config.targetLanguage);
 
-    case WM_KEYDOWN:
-    case WM_SYSKEYDOWN:
+    std::wstring result = tc->Translate(L"Hello world! This is a test connection message.");
+
+    if (!result.empty())
+        UpdateStatus(L"Connection OK. Response: " + result);
+    else
+        UpdateStatus(L"Connection error: " + tc->GetLastError());
+}
+
+void SettingsWindow::OnToggleDrag()
+{
+    if (m_config.displayMode == DisplayMode::InPlace)
     {
-        UINT vk = static_cast<UINT>(wParam);
-        
-        // Identify modifiers currently held down
-        UINT mod = 0;
-        if (GetKeyState(VK_CONTROL) & 0x8000) mod |= MOD_CONTROL;
-        if (GetKeyState(VK_SHIFT)   & 0x8000) mod |= MOD_SHIFT;
-        if (GetKeyState(VK_MENU)    & 0x8000) mod |= MOD_ALT;
-        if (GetKeyState(VK_LWIN)    & 0x8000) mod |= MOD_WIN;
-        if (GetKeyState(VK_RWIN)    & 0x8000) mod |= MOD_WIN;
-
-        // Check if the key pressed is itself a modifier key
-        bool isModifierKey = (vk == VK_CONTROL || vk == VK_LCONTROL || vk == VK_RCONTROL ||
-                              vk == VK_SHIFT || vk == VK_LSHIFT || vk == VK_RSHIFT ||
-                              vk == VK_MENU || vk == VK_LMENU || vk == VK_RMENU ||
-                              vk == VK_LWIN || vk == VK_RWIN);
-
-        if (isModifierKey)
-        {
-            std::wstring s;
-            if (mod & MOD_CONTROL) s += L"Ctrl + ";
-            if (mod & MOD_SHIFT)   s += L"Shift + ";
-            if (mod & MOD_ALT)     s += L"Alt + ";
-            if (mod & MOD_WIN)     s += L"Win + ";
-            s += L"...";
-            SetWindowTextW(hWnd, s.c_str());
-        }
-        else
-        {
-            if ((vk == VK_ESCAPE || vk == VK_BACK || vk == VK_DELETE) && mod == 0)
-            {
-                if (uIdSubclass == IDC_HOTKEY_EDIT)
-                {
-                    pThis->m_config.hotkeyVk = 0;
-                    pThis->m_config.hotkeyMod = 0;
-                }
-                else if (uIdSubclass == IDC_PAUSE_HOTKEY_EDIT)
-                {
-                    pThis->m_config.pauseHotkeyVk = 0;
-                    pThis->m_config.pauseHotkeyMod = 0;
-                }
-                else if (uIdSubclass == IDC_TOGGLE_WND_HOTKEY_EDIT)
-                {
-                    pThis->m_config.toggleWndVk = 0;
-                    pThis->m_config.toggleWndMod = 0;
-                }
-                else if (uIdSubclass == IDC_REGION_HOTKEY_EDIT)
-                {
-                    pThis->m_config.regionHotkeyVk = 0;
-                    pThis->m_config.regionHotkeyMod = 0;
-                }
-                SetWindowTextW(hWnd, L"None");
-            }
-            else
-            {
-                if (uIdSubclass == IDC_HOTKEY_EDIT)
-                {
-                    pThis->m_config.hotkeyVk = vk;
-                    pThis->m_config.hotkeyMod = mod;
-                }
-                else if (uIdSubclass == IDC_PAUSE_HOTKEY_EDIT)
-                {
-                    pThis->m_config.pauseHotkeyVk = vk;
-                    pThis->m_config.pauseHotkeyMod = mod;
-                }
-                else if (uIdSubclass == IDC_TOGGLE_WND_HOTKEY_EDIT)
-                {
-                    pThis->m_config.toggleWndVk = vk;
-                    pThis->m_config.toggleWndMod = mod;
-                }
-                else if (uIdSubclass == IDC_REGION_HOTKEY_EDIT)
-                {
-                    pThis->m_config.regionHotkeyVk = vk;
-                    pThis->m_config.regionHotkeyMod = mod;
-                }
-                SetWindowTextW(hWnd, SettingsWindow::HotkeyToString(vk, mod).c_str());
-            }
-        }
-        return 0;
+        MessageBoxW(m_hwnd, L"Dragging is disabled in In-Place mode since the overlay is automatically locked to the capture region.", L"Information", MB_ICONINFORMATION);
+        return;
     }
 
-    case WM_KEYUP:
-    case WM_SYSKEYUP:
-    {
-        wchar_t buf[64]{};
-        GetWindowTextW(hWnd, buf, 64);
-        std::wstring text(buf);
-        if (text.size() >= 3 && text.compare(text.size() - 3, 3, L"...") == 0)
-        {
-            UINT mod = 0;
-            if (GetKeyState(VK_CONTROL) & 0x8000) mod |= MOD_CONTROL;
-            if (GetKeyState(VK_SHIFT)   & 0x8000) mod |= MOD_SHIFT;
-            if (GetKeyState(VK_MENU)    & 0x8000) mod |= MOD_ALT;
-            if (GetKeyState(VK_LWIN)    & 0x8000) mod |= MOD_WIN;
-            if (GetKeyState(VK_RWIN)    & 0x8000) mod |= MOD_WIN;
+    bool newMode = !m_overlay.IsDragMode();
+    m_overlay.EnableDrag(newMode);
+    UpdateStatus(newMode ? L"Drag mode ON - drag the overlay, then lock when done." : L"Drag mode OFF - overlay is click-through.");
 
-            std::wstring s;
-            if (mod & MOD_CONTROL) s += L"Ctrl + ";
-            if (mod & MOD_SHIFT)   s += L"Shift + ";
-            if (mod & MOD_ALT)     s += L"Alt + ";
-            if (mod & MOD_WIN)     s += L"Win + ";
-            if (s.empty())
-            {
-                if (uIdSubclass == IDC_HOTKEY_EDIT)
-                {
-                    s = SettingsWindow::HotkeyToString(pThis->m_config.hotkeyVk, pThis->m_config.hotkeyMod);
-                }
-                else if (uIdSubclass == IDC_PAUSE_HOTKEY_EDIT)
-                {
-                    s = SettingsWindow::HotkeyToString(pThis->m_config.pauseHotkeyVk, pThis->m_config.pauseHotkeyMod);
-                }
-                else if (uIdSubclass == IDC_TOGGLE_WND_HOTKEY_EDIT)
-                {
-                    s = SettingsWindow::HotkeyToString(pThis->m_config.toggleWndVk, pThis->m_config.toggleWndMod);
-                }
-                else if (uIdSubclass == IDC_REGION_HOTKEY_EDIT)
-                {
-                    s = SettingsWindow::HotkeyToString(pThis->m_config.regionHotkeyVk, pThis->m_config.regionHotkeyMod);
-                }
-            }
-            else
-            {
-                s += L"...";
-            }
-            SetWindowTextW(hWnd, s.c_str());
-        }
-        return 0;
-    }
+    int ox, oy;
+    m_overlay.GetPosition(ox, oy);
+    m_config.overlayPos = { static_cast<LONG>(ox), static_cast<LONG>(oy) };
+}
 
-    case WM_KILLFOCUS:
-    {
-        if (uIdSubclass == IDC_HOTKEY_EDIT)
-        {
-            SetWindowTextW(hWnd, SettingsWindow::HotkeyToString(pThis->m_config.hotkeyVk, pThis->m_config.hotkeyMod).c_str());
-        }
-        else if (uIdSubclass == IDC_PAUSE_HOTKEY_EDIT)
-        {
-            SetWindowTextW(hWnd, SettingsWindow::HotkeyToString(pThis->m_config.pauseHotkeyVk, pThis->m_config.pauseHotkeyMod).c_str());
-        }
-        else if (uIdSubclass == IDC_TOGGLE_WND_HOTKEY_EDIT)
-        {
-            SetWindowTextW(hWnd, SettingsWindow::HotkeyToString(pThis->m_config.toggleWndVk, pThis->m_config.toggleWndMod).c_str());
-            pThis->RegisterToggleWndHotkey();
-        }
-        else if (uIdSubclass == IDC_REGION_HOTKEY_EDIT)
-        {
-            SetWindowTextW(hWnd, SettingsWindow::HotkeyToString(pThis->m_config.regionHotkeyVk, pThis->m_config.regionHotkeyMod).c_str());
-            pThis->RegisterRegionHotkey();
-        }
-        break;
-    }
+void SettingsWindow::OnProviderChanged()
+{
+    if (m_config.providerType == TranslateProvider::DeepSeek)
+        UpdateStatus(L"Provider: DeepSeek - uses DeepSeek API via HTTP REST.");
+    else
+        UpdateStatus(L"Provider: Google Translate - uses public Google Translate API.");
+}
 
-    case WM_NCDESTROY:
-        RemoveWindowSubclass(hWnd, HotkeyEditSubclassProc, uIdSubclass);
-        break;
-    }
-
-    return DefSubclassProc(hWnd, uMsg, wParam, lParam);
+void SettingsWindow::OnSave()
+{
+    UIToConfig();
+    m_config.Save(GetIniPath());
+    UpdateStatus(L"Settings saved.");
+    m_controller->ResetRegionOcr();
 }
 
 // -----------------------------------------------------------------------------
@@ -1577,13 +1431,11 @@ void SettingsWindow::OnHotkey(int id)
     {
         if (IsWindowVisible(m_hwnd) && !IsIconic(m_hwnd))
         {
-            // Currently visible, hide/minimize it
             AddTrayIcon();
             ShowWindow(m_hwnd, SW_HIDE);
         }
         else
         {
-            // Currently hidden/minimized, show/restore it
             RemoveTrayIcon();
             ShowWindow(m_hwnd, SW_RESTORE);
             SetForegroundWindow(m_hwnd);
@@ -1602,7 +1454,7 @@ void SettingsWindow::OnHotkey(int id)
 
     if (id == HOTKEY_CAPTURE_ID)
     {
-        UpdateStatus(L"Hotkey pressed — capturing frame...");
+        UpdateStatus(L"Hotkey pressed - capturing frame...");
         m_controller->TriggerOnce();
     }
     else if (id == HOTKEY_PAUSE_ID)
@@ -1623,200 +1475,63 @@ void SettingsWindow::OnHotkey(int id)
 }
 
 // -----------------------------------------------------------------------------
-//  Command handlers
+//  Region selection trigger & execution
 // -----------------------------------------------------------------------------
 
-void SettingsWindow::OnStart()
+void SettingsWindow::OnRegionHotkeyPressed()
 {
-    if (m_running) return;
+    UpdateStatus(L"Region hotkey pressed. Drag to select region...");
+    m_regionResult.Hide();
+    m_regionSelect.Show();
+}
 
-    UIToConfig();
+void SettingsWindow::PerformRegionCapture(const RECT& region)
+{
+    int rx = region.left;
+    int ry = region.top;
+    int rw = region.right - region.left;
+    int rh = region.bottom - region.top;
 
-    if (!m_config.captureSet)
-    {
-        MessageBoxW(m_hwnd,
-            L"Please select a capture region first.",
-            L"No Region Set", MB_ICONWARNING);
-        return;
-    }
+    if (rw <= 0 || rh <= 0) return;
 
-    // Sync settings to controller
+    HDC hScreen = GetDC(nullptr);
+    HDC hMem = CreateCompatibleDC(hScreen);
+    HBITMAP hBmp = CreateCompatibleBitmap(hScreen, rw, rh);
+    HGDIOBJ hOld = SelectObject(hMem, hBmp);
+
+    BitBlt(hMem, 0, 0, rw, rh, hScreen, rx, ry, SRCCOPY);
+    SelectObject(hMem, hOld);
+    DeleteDC(hMem);
+    ReleaseDC(nullptr, hScreen);
+
+    cv::Mat mat(rh, rw, CV_8UC4);
+    BITMAPINFOHEADER bih{};
+    bih.biSize = sizeof(BITMAPINFOHEADER);
+    bih.biWidth = rw;
+    bih.biHeight = -rh;
+    bih.biPlanes = 1;
+    bih.biBitCount = 32;
+    bih.biCompression = BI_RGB;
+
+    HDC hScreenDC = GetDC(nullptr);
+    GetDIBits(hScreenDC, hBmp, 0, rh, mat.data, reinterpret_cast<BITMAPINFO*>(&bih), DIB_RGB_COLORS);
+    ReleaseDC(nullptr, hScreenDC);
+
+    DeleteObject(hBmp);
+
     m_controller->GetConfig() = m_config;
-    
-    if (!m_controller->Start(m_hwnd, &m_overlay))
+    std::wstring ocrText;
+    std::wstring result = m_controller->PerformRegionCaptureAndTranslate(mat, ocrText);
+
+    if (result.empty())
     {
-        MessageBoxW(m_hwnd,
-            (L"Start failed:\n" + m_controller->GetLastError()).c_str(),
-            L"Error", MB_ICONERROR);
+        auto* data = new RegionResultData{ region, L"" };
+        PostMessageW(m_hwnd, WM_SHOW_REGION_RESULT, 0, reinterpret_cast<LPARAM>(data));
         return;
     }
 
-    // Hide capture helper, set overlay to translation mode
-    m_captureHelper.Show(false);
-    m_overlay.EnableDrag(false);
-
-    // Apply appearance to overlay
-    m_overlay.SetFontName(m_config.fontName);
-    m_overlay.SetFontSize(m_config.fontSize);
-    m_overlay.SetTextColor(m_config.textColor);
-    m_overlay.SetShadowColor(m_config.shadowColor);
-    m_overlay.SetShadowEnabled(m_config.shadowEnabled);
-    m_overlay.SetStrokeColor(m_config.strokeColor);
-    m_overlay.SetStrokeEnabled(m_config.strokeEnabled);
-    m_overlay.SetStrokeWidth(m_config.strokeWidth);
-
-    if (m_config.displayMode == DisplayMode::InPlace)
-    {
-        m_overlay.SetPosition(m_config.captureRect.left, m_config.captureRect.top);
-        m_overlay.SetSize(m_config.captureRect.right - m_config.captureRect.left,
-                          m_config.captureRect.bottom - m_config.captureRect.top);
-        m_overlay.SetInPlaceText(L"", {});
-    }
-    else
-    {
-        m_overlay.SetPosition(m_config.overlayPos.x, m_config.overlayPos.y);
-        m_overlay.SetSize(m_config.overlayWidth, m_config.overlayHeight);
-        m_overlay.SetText(L"");
-    }
-    m_overlay.Show();
-
-    if (m_config.captureMode == CaptureMode::Auto)
-    {
-        RegisterPauseHotkey();
-        UpdateStatus(L"Started (Auto mode, interval: " +
-            std::to_wstring(m_config.captureIntervalMs) + L"ms).");
-    }
-    else
-    {
-        RegisterCaptureHotkey();
-        UpdateStatus(L"Started (Hotkey mode: " + HotkeyToString(m_config.hotkeyVk, m_config.hotkeyMod) + L").");
-    }
-
-    m_running = true;
-    EnableWindow(GetDlgItem(m_hwnd, IDC_START_BTN), FALSE);
-    EnableWindow(GetDlgItem(m_hwnd, IDC_STOP_BTN), TRUE);
-
-    // Minimize settings window immediately
-    ShowWindow(m_hwnd, SW_MINIMIZE);
-}
-
-void SettingsWindow::OnStop()
-{
-    if (!m_running) return;
-
-    UnregisterCaptureHotkey();
-    UnregisterPauseHotkey();
-    m_controller->Stop();
-
-    m_running = false;
-    EnableWindow(GetDlgItem(m_hwnd, IDC_START_BTN), TRUE);
-    EnableWindow(GetDlgItem(m_hwnd, IDC_STOP_BTN), FALSE);
-    UpdateStatus(L"Stopped.");
-
-    SyncHelperWindows();
-}
-
-void SettingsWindow::OnSelectRegion()
-{
-    // Reset capture region to center of primary monitor
-    int sw = GetSystemMetrics(SM_CXSCREEN);
-    int sh = GetSystemMetrics(SM_CYSCREEN);
-    RECT rc = { (sw - 800) / 2, (sh - 150) / 2, (sw + 800) / 2, (sh + 150) / 2 };
-    m_captureHelper.SetRect(rc);
-    m_config.captureRect = rc;
-    m_config.captureSet = true;
-    UpdateRegionLabel();
-    UpdateStatus(L"Capture region reset to screen center.");
-}
-
-void SettingsWindow::OnTestApi()
-{
-    UIToConfig();
-    UpdateStatus(L"Testing connection...");
-
-    auto tc = TranslateProviderFactory::CreateProvider(m_config.providerType);
-    if (!tc)
-    {
-        UpdateStatus(L"API Test failed: Invalid translate provider.");
-        return;
-    }
-    tc->SetApiKey(m_config.apiKey);
-    tc->SetApiModel(m_config.apiModel);
-    tc->SetTargetLanguage(m_config.targetLanguage);
-
-    std::wstring result = tc->Translate(L"Hello world! This is a test connection message.");
-
-    if (!result.empty())
-        UpdateStatus(L"DeepSeek OK. Response: " + result);
-    else
-        UpdateStatus(L"DeepSeek error: " + tc->GetLastError());
-}
-
-void SettingsWindow::OnToggleDrag()
-{
-    if (m_config.displayMode == DisplayMode::InPlace)
-    {
-        MessageBoxW(m_hwnd,
-            L"Dragging is disabled in In-Place mode since the overlay is automatically locked to the capture region.",
-            L"Information", MB_ICONINFORMATION);
-        return;
-    }
-
-    bool newMode = !m_overlay.IsDragMode();
-    m_overlay.EnableDrag(newMode);
-    UpdateStatus(newMode ? L"Drag mode ON \u2014 drag the overlay, then click again to lock."
-        : L"Drag mode OFF \u2014 overlay is click-through.");
-
-    // Sync position after drag ends (or before entering drag mode)
-    int ox, oy;
-    m_overlay.GetPosition(ox, oy);
-    m_config.overlayPos = { static_cast<LONG>(ox), static_cast<LONG>(oy) };
-    wchar_t posBuf[64]{};
-    swprintf(posBuf, 64, L"X: %d   Y: %d", ox, oy);
-    SetDlgItemTextW(m_hwnd, IDC_OVERLAY_POS_LABEL, posBuf);
-}
-
-void SettingsWindow::OnProviderChanged()
-{
-    HWND hProv = GetDlgItem(m_hwnd, IDC_PROVIDER_COMBO);
-    int idx = static_cast<int>(SendMessageW(hProv, CB_GETCURSEL, 0, 0));
-    if (idx == 0)
-        UpdateStatus(L"Provider: DeepSeek - uses DeepSeek API via HTTP REST.");
-    else if (idx == 1)
-        UpdateStatus(L"Provider: Google Translate - uses public Google Translate API.");
-
-    UpdateProviderUI();
-}
-
-void SettingsWindow::OnSave()
-{
-    UIToConfig();
-    m_config.Save(GetIniPath());
-    UpdateStatus(L"Settings saved.");
-    
-    // Reset region OCR to allow reloading with a new type next time
-    m_controller->ResetRegionOcr();
-}
-
-void SettingsWindow::OnColorPick(COLORREF& colorRef)
-{
-    static COLORREF customColors[16]{};
-    CHOOSECOLORW cc{};
-    cc.lStructSize = sizeof(cc);
-    cc.hwndOwner = m_hwnd;
-    cc.rgbResult = colorRef;
-    cc.lpCustColors = customColors;
-    cc.Flags = CC_FULLOPEN | CC_RGBINIT;
-    if (ChooseColorW(&cc))
-    {
-        colorRef = cc.rgbResult;
-        SyncHelperWindows();
-    }
-}
-
-void SettingsWindow::OnTextColorPick()
-{
-    OnColorPick(m_config.textColor);
+    auto* data = new RegionResultData{ region, result };
+    PostMessageW(m_hwnd, WM_SHOW_REGION_RESULT, 0, reinterpret_cast<LPARAM>(data));
 }
 
 // -----------------------------------------------------------------------------
@@ -1866,8 +1581,7 @@ void SettingsWindow::ShowTrayMenu()
     POINT pt{};
     GetCursorPos(&pt);
     SetForegroundWindow(m_hwnd);
-    TrackPopupMenu(hMenu, TPM_BOTTOMALIGN | TPM_LEFTALIGN,
-        pt.x, pt.y, 0, m_hwnd, nullptr);
+    TrackPopupMenu(hMenu, TPM_BOTTOMALIGN | TPM_LEFTALIGN, pt.x, pt.y, 0, m_hwnd, nullptr);
     DestroyMenu(hMenu);
 }
 
@@ -1879,7 +1593,6 @@ std::wstring SettingsWindow::GetIniPath() const
 {
     wchar_t path[MAX_PATH]{};
     GetModuleFileNameW(nullptr, path, MAX_PATH);
-    // Replace .exe extension with .ini
     wchar_t* dot = wcsrchr(path, L'.');
     if (dot) wcscpy_s(dot, 8, L".ini");
     return path;
@@ -1892,7 +1605,7 @@ void SettingsWindow::SyncHelperWindows()
     if (showHelpers && !m_running)
     {
         m_captureHelper.Show(true);
-        UpdateRoiUI();
+        m_captureHelper.ShowRoi(m_config.roiActive && m_captureHelper.IsVisible());
 
         if (m_config.displayMode == DisplayMode::InPlace)
         {
@@ -1903,7 +1616,6 @@ void SettingsWindow::SyncHelperWindows()
         {
             m_overlay.EnableDrag(true);
             
-            // Render preview text so user can see font styles
             m_overlay.SetFontName(m_config.fontName);
             m_overlay.SetFontSize(m_config.fontSize);
             m_overlay.SetTextColor(m_config.textColor);
@@ -1930,66 +1642,79 @@ void SettingsWindow::SyncHelperWindows()
 }
 
 // -----------------------------------------------------------------------------
-//  Region selection trigger & execution
+//  Hotkey to string helpers
 // -----------------------------------------------------------------------------
 
-void SettingsWindow::OnRegionHotkeyPressed()
+std::wstring SettingsWindow::VkToName(UINT vk)
 {
-    UpdateStatus(L"Region hotkey pressed. Drag to select region...");
-    // Close current result overlay if any
-    m_regionResult.Hide();
-    // Show fullscreen transparent selection overlay
-    m_regionSelect.Show();
-}
-
-void SettingsWindow::PerformRegionCapture(const RECT& region)
-{
-    int rx = region.left;
-    int ry = region.top;
-    int rw = region.right - region.left;
-    int rh = region.bottom - region.top;
-
-    if (rw <= 0 || rh <= 0) return;
-
-    // GDI Screenshot of region
-    HDC hScreen = GetDC(nullptr);
-    HDC hMem = CreateCompatibleDC(hScreen);
-    HBITMAP hBmp = CreateCompatibleBitmap(hScreen, rw, rh);
-    HGDIOBJ hOld = SelectObject(hMem, hBmp);
-
-    BitBlt(hMem, 0, 0, rw, rh, hScreen, rx, ry, SRCCOPY);
-    SelectObject(hMem, hOld);
-    DeleteDC(hMem);
-    ReleaseDC(nullptr, hScreen);
-
-    // Convert HBITMAP to cv::Mat (BGRA)
-    cv::Mat mat(rh, rw, CV_8UC4);
-    BITMAPINFOHEADER bih{};
-    bih.biSize = sizeof(BITMAPINFOHEADER);
-    bih.biWidth = rw;
-    bih.biHeight = -rh; // Top-down
-    bih.biPlanes = 1;
-    bih.biBitCount = 32;
-    bih.biCompression = BI_RGB;
-
-    HDC hScreenDC = GetDC(nullptr);
-    GetDIBits(hScreenDC, hBmp, 0, rh, mat.data, reinterpret_cast<BITMAPINFO*>(&bih), DIB_RGB_COLORS);
-    ReleaseDC(nullptr, hScreenDC);
-
-    DeleteObject(hBmp);
-
-    m_controller->GetConfig() = m_config; // Sync configuration
-    std::wstring ocrText;
-    std::wstring result = m_controller->PerformRegionCaptureAndTranslate(mat, ocrText);
-
-    if (result.empty())
+    switch (vk)
     {
-        auto* data = new RegionResultData{ region, L"" };
-        PostMessageW(m_hwnd, WM_SHOW_REGION_RESULT, 0, reinterpret_cast<LPARAM>(data));
-        return;
+    case VK_SPACE: return L"Space";
+    case VK_RETURN: return L"Enter";
+    case VK_TAB: return L"Tab";
+    case VK_ESCAPE: return L"Esc";
+    case VK_BACK: return L"Backspace";
+    case VK_DELETE: return L"Delete";
+    case VK_INSERT: return L"Insert";
+    case VK_HOME: return L"Home";
+    case VK_END: return L"End";
+    case VK_PRIOR: return L"PageUp";
+    case VK_NEXT: return L"PageDown";
+    case VK_LEFT: return L"Left";
+    case VK_UP: return L"Up";
+    case VK_RIGHT: return L"Right";
+    case VK_DOWN: return L"Down";
+    case VK_SNAPSHOT: return L"PrintScreen";
+    case VK_SCROLL: return L"ScrollLock";
+    case VK_PAUSE: return L"Pause";
+    case VK_CAPITAL: return L"CapsLock";
+    case VK_NUMLOCK: return L"NumLock";
     }
 
-    // Marshal window display to UI thread
-    auto* data = new RegionResultData{ region, result };
-    PostMessageW(m_hwnd, WM_SHOW_REGION_RESULT, 0, reinterpret_cast<LPARAM>(data));
+    if (vk >= VK_F1 && vk <= VK_F24)
+        return L"F" + std::to_wstring(vk - VK_F1 + 1);
+    if (vk >= 'A' && vk <= 'Z')
+        return std::wstring(1, static_cast<wchar_t>(vk));
+    if (vk >= '0' && vk <= '9')
+        return std::wstring(1, static_cast<wchar_t>(vk));
+
+    UINT scanCode = MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
+    LONG lParam = scanCode << 16;
+    switch (vk)
+    {
+    case VK_INSERT:
+    case VK_DELETE:
+    case VK_HOME:
+    case VK_END:
+    case VK_PRIOR:
+    case VK_NEXT:
+    case VK_LEFT:
+    case VK_UP:
+    case VK_RIGHT:
+    case VK_DOWN:
+    case VK_DIVIDE:
+    case VK_NUMLOCK:
+        lParam |= 0x01000000;
+        break;
+    }
+
+    wchar_t name[64]{};
+    if (GetKeyNameTextW(lParam, name, 64) > 0)
+    {
+        return name;
+    }
+
+    return L"VK_" + std::to_wstring(vk);
+}
+
+std::wstring SettingsWindow::HotkeyToString(UINT vk, UINT mod)
+{
+    if (vk == 0) return L"None";
+    std::wstring s;
+    if (mod & MOD_CONTROL) s += L"Ctrl + ";
+    if (mod & MOD_SHIFT)   s += L"Shift + ";
+    if (mod & MOD_ALT)     s += L"Alt + ";
+    if (mod & MOD_WIN)     s += L"Win + ";
+    s += VkToName(vk);
+    return s;
 }
