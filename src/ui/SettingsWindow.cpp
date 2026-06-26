@@ -621,12 +621,14 @@ void SettingsWindow::RenderUI()
     ImGui::Begin("SettingsWindowImGui", nullptr, wndFlags);
 
     // Custom Title Bar Area (LIGHT TRANSLATE)
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, 10.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f, 4.0f));
     ImGui::BeginGroup();
     
     // Icon / Title
     ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(ImVec4(0.48f, 0.40f, 0.92f, 1.00f), "  LIGHT TRANSLATE");
+    ImGui::TextColored(ImVec4(0.95f, 0.96f, 0.98f, 1.00f), "LIGHT");
+    ImGui::SameLine(0.0f, 6.0f);
+    ImGui::TextColored(ImVec4(0.58f, 0.48f, 0.98f, 1.00f), "TRANSLATE");
     
     // Minimize button
     ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - 125.0f);
@@ -673,8 +675,6 @@ void SettingsWindow::RenderUI()
     ImGui::EndGroup();
     ImGui::PopStyleVar();
     
-    ImGui::Separator();
-
     // Tab Bar
     if (ImGui::BeginTabBar("Tabs"))
     {
