@@ -315,7 +315,17 @@ LRESULT SettingsWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
 {
     switch (msg)
     {
+    case WM_SHOW_SETTINGS_WND:
+    {
+        RemoveTrayIcon();
+        ShowWindow(m_hwnd, SW_RESTORE);
+        SetForegroundWindow(m_hwnd);
+        SyncHelperWindows();
+        return 0;
+    }
+
     case WM_UPDATE_STATUS:
+
     {
         if (lParam)
         {

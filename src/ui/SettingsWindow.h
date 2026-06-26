@@ -29,6 +29,8 @@ public:
 
     HWND GetHWND() const { return m_hwnd; }
 
+    static constexpr wchar_t CLASS_NAME[] = L"GameTranslate_SettingsWnd";
+
 private:
     // -- Window procedure ------------------------------------------------------
     static LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
@@ -141,7 +143,6 @@ private:
     Updater          m_updater;
     std::atomic<bool> m_switchToAboutTab{ false };
 
-    static constexpr wchar_t CLASS_NAME[] = L"GameTranslate_SettingsWnd";
     static constexpr int WND_W = 720;
     static constexpr int WND_H = 850;
 };

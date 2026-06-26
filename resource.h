@@ -63,3 +63,5 @@
 #define WM_UPDATE_STATUS      (WM_APP + 2)   // LPARAM = wchar_t* (heap, caller frees)
 #define WM_SHOW_REGION_RESULT (WM_APP + 3)   // LPARAM = RegionResultData* (heap, UI thread frees)
 #define WM_OVERLAY_SETINPLACE (WM_APP + 4)   // LPARAM = OverlayInPlaceData* (heap, UI thread frees)
+#define WM_SHOW_SETTINGS_WND  (WM_APP + 5)
+

@@ -11,6 +11,19 @@ int WINAPI wWinMain(
     _In_ PWSTR lpCmdLine,
     _In_ int nShowCmd)
 {
+    // Check for previous instance
+    HANDLE hMutex = CreateMutexW(nullptr, TRUE, L"Local\\GameTranslateOverlay_SingleInstanceMutex");
+    if (hMutex != nullptr && GetLastError() == ERROR_ALREADY_EXISTS)
+    {
+        HWND hwndExisting = FindWindowW(SettingsWindow::CLASS_NAME, nullptr);
+        if (hwndExisting)
+        {
+            PostMessageW(hwndExisting, WM_SHOW_SETTINGS_WND, 0, 0);
+        }
+        CloseHandle(hMutex);
+        return 0;
+    }
+
     // Enable DPI awareness (must be first, before any window is created)
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
@@ -49,6 +62,11 @@ int WINAPI wWinMain(
 
     // Cleanup
     ShutdownGDIPlus(gdiplusToken);
+
+    if (hMutex != nullptr)
+    {
+        CloseHandle(hMutex);
+    }
 
     return result;
 }
