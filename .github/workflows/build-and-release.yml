@@ -137,7 +137,7 @@ jobs:
           echo "Extracting Detection Model..."
           7z x det_infer.tar -odet_temp
           $detDir = Get-ChildItem -Path "det_temp" -Directory | Select-Object -First 1
-          Move-Item -Path $detDir.FullName -Destination "light_translate_release/models/OCRv5_mobile_det_infer"
+          Move-Item -Path $detDir.FullName -Destination "light_translate_release/models/PP-OCRv5_mobile_det_infer"
           
           # Download and extract PP-OCRv5 Mobile Recognition Model
           echo "Downloading Recognition Model..."
@@ -145,7 +145,7 @@ jobs:
           echo "Extracting Recognition Model..."
           7z x rec_infer.tar -orec_temp
           $recDir = Get-ChildItem -Path "rec_temp" -Directory | Select-Object -First 1
-          Move-Item -Path $recDir.FullName -Destination "light_translate_release/models/OCRv5_mobile_rec_infer"
+          Move-Item -Path $recDir.FullName -Destination "light_translate_release/models/PP-OCRv5_mobile_rec_infer"
           
           # Zip the release folder
           Compress-Archive -Path "light_translate_release/*" -DestinationPath "light-translate-windows-x64.zip"
