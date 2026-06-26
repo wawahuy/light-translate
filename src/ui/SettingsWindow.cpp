@@ -678,6 +678,80 @@ void SettingsWindow::RenderUI()
     // Tab Bar
     if (ImGui::BeginTabBar("Tabs"))
     {
+        // ----------------- APP TAB -----------------
+        if (ImGui::BeginTabItem("App"))
+        {
+            ImGui::TextDisabled("Application Mode");
+            ImGui::Spacing();
+
+            ImGui::RadioButton("Windows Overlay (Legacy)", &m_appMode, 0);
+            ImGui::SameLine();
+            ImGui::RadioButton("In-Game Hooking (Advanced)", &m_appMode, 1);
+
+            ImGui::Spacing();
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
+            if (m_appMode == 0)
+            {
+                ImGui::TextWrapped("Description: Windows Overlay (Legacy)\n"
+                                   "• Requires target game/application to run in Windowed or Borderless mode.\n"
+                                   "• Renders translation text on a transparent top-most system overlay window.\n"
+                                   "• Maximum compatibility across various applications and easy setup.");
+            }
+            else if (m_appMode == 1)
+            {
+                ImGui::TextWrapped("Description: In-Game Hooking (Advanced)\n"
+                                   "• Injects directly into graphics rendering pipeline (DX11/DX12/OpenGL/Vulkan).\n"
+                                   "• Renders translation text inside the game frame (works in Exclusive Fullscreen).\n"
+                                   "• Maximum rendering performance, zero window positioning lag, and seamless overlay.");
+            }
+            ImGui::PopStyleColor();
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            ImGui::TextDisabled("Control Panel");
+            ImGui::Spacing();
+
+            if (m_running)
+            {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.15f, 0.15f, 1.00f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.25f, 0.25f, 1.00f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.7f, 0.10f, 0.10f, 1.00f));
+                if (ImGui::Button("STOP", ImVec2(200, 45)))
+                {
+                    OnStop();
+                }
+                ImGui::PopStyleColor(3);
+            }
+            else
+            {
+                if (m_appMode == 1)
+                {
+                    ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.1f, 1.0f), "This mode will be supported in version 3.0.0.");
+                    ImGui::Spacing();
+                    ImGui::BeginDisabled();
+                }
+
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.6f, 0.15f, 1.00f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.7f, 0.25f, 1.00f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.5f, 0.10f, 1.00f));
+                if (ImGui::Button("START", ImVec2(200, 45)))
+                {
+                    OnStart();
+                }
+                ImGui::PopStyleColor(3);
+
+                if (m_appMode == 1)
+                {
+                    ImGui::EndDisabled();
+                }
+            }
+
+            ImGui::Spacing();
+            ImGui::EndTabItem();
+        }
+
         // ----------------- REALTIME TAB -----------------
         if (ImGui::BeginTabItem("Realtime"))
         {
@@ -929,6 +1003,27 @@ void SettingsWindow::RenderUI()
             ImGui::EndTabItem();
         }
 
+        // ----------------- OUTPUT LOG TAB -----------------
+        if (ImGui::BeginTabItem("Output Log"))
+        {
+            ImGui::TextDisabled("System Output Log");
+            ImGui::Spacing();
+            
+            ImGui::BeginChild("LogArea", ImVec2(0, -10), true);
+            for (const auto& log : m_logs)
+            {
+                ImGui::TextUnformatted(WideToUtf8(log).c_str());
+            }
+            if (m_scrollToBottom)
+            {
+                ImGui::SetScrollHereY(1.0f);
+                m_scrollToBottom = false;
+            }
+            ImGui::EndChild();
+
+            ImGui::EndTabItem();
+        }
+
         // ----------------- ABOUT TAB -----------------
         #ifndef APP_VERSION
         #define APP_VERSION "v0.0.0-dev"
@@ -1054,58 +1149,6 @@ void SettingsWindow::RenderUI()
 
         ImGui::EndTabBar();
     }
-
-    ImGui::Separator();
-
-    // Start / Stop buttons
-    if (m_running)
-    {
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
-        ImGui::Button("START", ImVec2(120, 0));
-        ImGui::PopStyleColor(3);
-    }
-    else
-    {
-        if (ImGui::Button("START", ImVec2(120, 0)))
-        {
-            OnStart();
-        }
-    }
-
-    ImGui::SameLine(ImGui::GetWindowWidth() - 140.0f);
-
-    if (!m_running)
-    {
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
-        ImGui::Button("STOP", ImVec2(120, 0));
-        ImGui::PopStyleColor(3);
-    }
-    else
-    {
-        if (ImGui::Button("STOP", ImVec2(120, 0)))
-        {
-            OnStop();
-        }
-    }
-
-    ImGui::Spacing();
-    ImGui::TextDisabled("Output Log");
-    
-    ImGui::BeginChild("LogArea", ImVec2(0, -10), true);
-    for (const auto& log : m_logs)
-    {
-        ImGui::TextUnformatted(WideToUtf8(log).c_str());
-    }
-    if (m_scrollToBottom)
-    {
-        ImGui::SetScrollHereY(1.0f);
-        m_scrollToBottom = false;
-    }
-    ImGui::EndChild();
 
     ImGui::End();
 }

@@ -117,6 +117,7 @@ private:
 
     // ImGui state
     int                   m_currentTab = 0;
+    int                   m_appMode = 0; // 0: Windows Overlay (Legacy), 1: In-Game Hooking (Advanced)
     int                   m_recordingHotkeyType = 0; // 0: None, 1: Capture, 2: Pause, 3: Toggle, 4: Region
     float                 m_dpiScale = 1.0f;
 
@@ -144,5 +145,5 @@ private:
     std::atomic<bool> m_switchToAboutTab{ false };
 
     static constexpr int WND_W = 720;
-    static constexpr int WND_H = 850;
+    static constexpr int WND_H = 600;
 };
