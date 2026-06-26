@@ -3,9 +3,11 @@
 #include <windows.h>
 #include <d3d11.h>
 #include <memory>
+#include <atomic>
 #include <string>
 #include <vector>
 #include "src/AppConfig.h"
+#include "src/utils/Updater.h"
 #include "src/ui/OverlayWindow.h"
 #include "src/ui/CaptureHelperWindow.h"
 #include "src/ui/RegionSelectWindow.h"
@@ -136,6 +138,8 @@ private:
     RegionSelectWindow  m_regionSelect;
     RegionResultWindow  m_regionResult;
     std::unique_ptr<AppController> m_controller;
+    Updater          m_updater;
+    std::atomic<bool> m_switchToAboutTab{ false };
 
     static constexpr wchar_t CLASS_NAME[] = L"GameTranslate_SettingsWnd";
     static constexpr int WND_W = 720;

@@ -83,7 +83,9 @@ jobs:
       - name: Configure CMake
         shell: pwsh
         run: |
+          $version = if ("${{ github.ref_type }}" -eq "tag") { "${{ github.ref_name }}" } else { "v0.0.0-dev" }
           cmake -B build -S . -G "Visual Studio 17 2022" -A x64 `
+            -DAPP_VERSION="$version" `
             -DOPENCV_DIR="${{ github.workspace }}/opencv/opencv/build" `
             -DOpenCV_DIR="${{ github.workspace }}/opencv/opencv/build" `
             -DPADDLE_LIB="${{ github.workspace }}/paddle_inference_extracted" `
@@ -105,6 +107,7 @@ jobs:
           
           # Copy binary
           Copy-Item -Path "build/Release/light_translate.exe" -Destination "light_translate_release/"
+          Copy-Item -Path "build/Release/updater.exe" -Destination "light_translate_release/"
           
           # 1. Copy paddle_inference.dll
           Copy-Item -Path "paddle_inference_extracted/paddle/lib/paddle_inference.dll" -Destination "light_translate_release/"

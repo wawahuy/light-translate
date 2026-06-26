@@ -3,6 +3,11 @@ project(light_translate CXX)
 
 set(APP_NAME "light_translate")
 
+if(NOT DEFINED APP_VERSION)
+  set(APP_VERSION "v0.0.0-dev")
+endif()
+add_compile_definitions(APP_VERSION="${APP_VERSION}")
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
@@ -239,6 +244,7 @@ file(GLOB_RECURSE SRC_LIST
   "./src/*.cc"
   "./src/*.cpp"
 ) 
+list(FILTER SRC_LIST EXCLUDE REGEX ".*/src/updater/.*")
 set(SRCS main.cpp)
 
 set(IMGUI_SRC_LIST
@@ -280,6 +286,9 @@ source_group(
     ${HEADER_LIST}
     light_translate.rc
 )
+
+add_executable(updater WIN32 src/updater/main.cpp)
+target_link_libraries(updater user32)
 
 if (WIN32 AND WITH_MKL)
     add_custom_command(TARGET ${APP_NAME} POST_BUILD

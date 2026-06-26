@@ -216,6 +216,25 @@ bool SettingsWindow::Create(HINSTANCE hInstance)
     // Synchronize window states
     SyncHelperWindows();
 
+    // Automatically check for updates on startup.
+    m_updater.CheckForUpdateAsync(APP_VERSION, [this]() {
+        if (m_updater.GetStatus() == ::UpdateStatus::UpdateAvailable)
+        {
+            std::wstring msg = L"A new version (" + Utf8ToWide(m_updater.GetLatestVersion()) + L") is available.\n\nDo you want to download and install it now?";
+            int res = MessageBoxW(nullptr, msg.c_str(), L"Light Translate Update", MB_YESNO | MB_ICONINFORMATION | MB_SETFOREGROUND);
+            if (res == IDYES)
+            {
+                m_switchToAboutTab = true;
+                m_updater.DownloadUpdateAsync();
+                
+                // Restore settings window and bring it to front
+                ShowWindow(m_hwnd, SW_SHOW);
+                ShowWindow(m_hwnd, SW_RESTORE);
+                SetForegroundWindow(m_hwnd);
+            }
+        }
+    });
+
     return true;
 }
 
@@ -899,6 +918,130 @@ void SettingsWindow::RenderUI()
 
             ImGui::EndTabItem();
         }
+
+        // ----------------- ABOUT TAB -----------------
+        #ifndef APP_VERSION
+        #define APP_VERSION "v0.0.0-dev"
+        #endif
+
+        ImGuiTabItemFlags aboutFlags = 0;
+        if (m_switchToAboutTab.load())
+        {
+            aboutFlags |= ImGuiTabItemFlags_SetSelected;
+            m_switchToAboutTab = false;
+        }
+
+        if (ImGui::BeginTabItem("About", nullptr, aboutFlags))
+        {
+            ImGui::TextDisabled("Software Information");
+            ImGui::Spacing();
+            
+            std::string verStr = APP_VERSION;
+            ImGui::Text("Current Version: %s", verStr.c_str());
+            ImGui::SameLine(ImGui::GetWindowWidth() - 150.0f);
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.6f, 1.0f, 1.0f));
+            if (ImGui::Selectable("GitHub Repo"))
+            {
+                ShellExecuteW(nullptr, L"open", L"https://github.com/wawahuy/light-translate", nullptr, nullptr, SW_SHOWNORMAL);
+            }
+            ImGui::PopStyleColor();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // Render UI depending on the current update state.
+            ::UpdateStatus status = m_updater.GetStatus();
+            
+            if (status == ::UpdateStatus::Idle)
+            {
+                if (ImGui::Button("Check for Update", ImVec2(150, 0)))
+                {
+                    m_updater.CheckForUpdateAsync(APP_VERSION);
+                }
+            }
+            else if (status == ::UpdateStatus::Checking)
+            {
+                ImGui::Text("Checking for updates...");
+                static float dotTimer = 0.0f;
+                dotTimer += ImGui::GetIO().DeltaTime;
+                int dots = static_cast<int>(dotTimer * 2.0f) % 4;
+                ImGui::SameLine();
+                if (dots == 0) ImGui::Text("");
+                else if (dots == 1) ImGui::Text(".");
+                else if (dots == 2) ImGui::Text("..");
+                else if (dots == 3) ImGui::Text("...");
+            }
+            else if (status == ::UpdateStatus::UpToDate)
+            {
+                ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Your application is up-to-date!");
+                ImGui::Spacing();
+                if (ImGui::Button("Check Again", ImVec2(120, 0)))
+                {
+                    m_updater.CheckForUpdateAsync(APP_VERSION);
+                }
+            }
+            else if (status == ::UpdateStatus::UpdateAvailable)
+            {
+                ImGui::TextColored(ImVec4(0.9f, 0.7f, 0.1f, 1.0f), "A new version is available: %s", m_updater.GetLatestVersion().c_str());
+                ImGui::Spacing();
+                
+                ImGui::Text("Changelog:");
+                ImGui::BeginChild("ChangelogBox", ImVec2(0, 150), true);
+                ImGui::TextWrapped("%s", m_updater.GetReleaseNotes().c_str());
+                ImGui::EndChild();
+                ImGui::Spacing();
+                
+                if (ImGui::Button("Download and Update", ImVec2(200, 0)))
+                {
+                    m_updater.DownloadUpdateAsync();
+                }
+            }
+            else if (status == ::UpdateStatus::Downloading)
+            {
+                float progress = m_updater.GetDownloadProgress();
+                ImGui::Text("Downloading update...");
+                ImGui::ProgressBar(progress, ImVec2(-1, 25));
+                ImGui::Spacing();
+                if (ImGui::Button("Cancel", ImVec2(100, 0)))
+                {
+                    m_updater.CancelDownload();
+                }
+            }
+            else if (status == ::UpdateStatus::DownloadSuccess)
+            {
+                ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Download complete!");
+                ImGui::Text("The application will restart to complete the update.");
+                ImGui::Spacing();
+                if (ImGui::Button("Restart & Update Now", ImVec2(200, 0)))
+                {
+                    m_updater.InstallAndRestart();
+                }
+            }
+            else if (status == ::UpdateStatus::DownloadFailed)
+            {
+                ImGui::TextColored(ImVec4(0.9f, 0.2f, 0.2f, 1.0f), "Download failed.");
+                std::string err = WideToUtf8(m_updater.GetErrorMessage());
+                ImGui::TextWrapped("Error: %s", err.c_str());
+                ImGui::Spacing();
+                if (ImGui::Button("Retry", ImVec2(120, 0)))
+                {
+                    m_updater.DownloadUpdateAsync();
+                }
+            }
+            else if (status == ::UpdateStatus::Error)
+            {
+                ImGui::TextColored(ImVec4(0.9f, 0.2f, 0.2f, 1.0f), "An error occurred.");
+                std::string err = WideToUtf8(m_updater.GetErrorMessage());
+                ImGui::TextWrapped("Error: %s", err.c_str());
+                ImGui::Spacing();
+                if (ImGui::Button("Try Again", ImVec2(120, 0)))
+                {
+                    m_updater.CheckForUpdateAsync(APP_VERSION);
+                }
+            }
+
+            ImGui::EndTabItem();
+        }
+
         ImGui::EndTabBar();
     }
 
