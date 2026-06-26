@@ -681,354 +681,46 @@ void SettingsWindow::RenderUI()
         // ----------------- APP TAB -----------------
         if (ImGui::BeginTabItem("App"))
         {
-            ImGui::TextDisabled("Application Mode");
-            ImGui::Spacing();
-
-            ImGui::RadioButton("Windows Overlay (Legacy)", &m_appMode, 0);
-            ImGui::SameLine();
-            ImGui::RadioButton("In-Game Hooking (Advanced)", &m_appMode, 1);
-
-            ImGui::Spacing();
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
-            if (m_appMode == 0)
-            {
-                ImGui::TextWrapped("Description: Windows Overlay (Legacy)\n"
-                                   "• Requires target game/application to run in Windowed or Borderless mode.\n"
-                                   "• Renders translation text on a transparent top-most system overlay window.\n"
-                                   "• Maximum compatibility across various applications and easy setup.");
-            }
-            else if (m_appMode == 1)
-            {
-                ImGui::TextWrapped("Description: In-Game Hooking (Advanced)\n"
-                                   "• Injects directly into graphics rendering pipeline (DX11/DX12/OpenGL/Vulkan).\n"
-                                   "• Renders translation text inside the game frame (works in Exclusive Fullscreen).\n"
-                                   "• Maximum rendering performance, zero window positioning lag, and seamless overlay.");
-            }
-            ImGui::PopStyleColor();
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            ImGui::TextDisabled("Control Panel");
-            ImGui::Spacing();
-
-            if (m_running)
-            {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.15f, 0.15f, 1.00f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.25f, 0.25f, 1.00f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.7f, 0.10f, 0.10f, 1.00f));
-                if (ImGui::Button("STOP", ImVec2(200, 45)))
-                {
-                    OnStop();
-                }
-                ImGui::PopStyleColor(3);
-            }
-            else
-            {
-                if (m_appMode == 1)
-                {
-                    ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.1f, 1.0f), "This mode will be supported in version 3.0.0.");
-                    ImGui::Spacing();
-                    ImGui::BeginDisabled();
-                }
-
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.6f, 0.15f, 1.00f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.7f, 0.25f, 1.00f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.5f, 0.10f, 1.00f));
-                if (ImGui::Button("START", ImVec2(200, 45)))
-                {
-                    OnStart();
-                }
-                ImGui::PopStyleColor(3);
-
-                if (m_appMode == 1)
-                {
-                    ImGui::EndDisabled();
-                }
-            }
-
-            ImGui::Spacing();
+            RenderAppTab();
             ImGui::EndTabItem();
         }
 
         // ----------------- REALTIME TAB -----------------
         if (ImGui::BeginTabItem("Realtime"))
         {
-            ImGui::TextDisabled("Capture Settings");
-            
-            // Monitor index selection
-            const char* monitorOptions[] = { "0 - Primary", "1 - Second", "2 - Third" };
-            int currentMon = std::min(m_config.monitorIndex, 2);
-            ImGui::SetNextItemWidth(150.0f);
-            if (ImGui::Combo("Monitor", &currentMon, monitorOptions, IM_ARRAYSIZE(monitorOptions)))
-            {
-                m_config.monitorIndex = currentMon;
-            }
-
-            // Capture region display/reset
-            ImGui::SameLine();
-            if (ImGui::Button("Reset Capture Region"))
-            {
-                OnSelectRegion();
-            }
-            ImGui::SameLine();
-            ImGui::Text("Region: %s", WideToUtf8(GetRegionInfoText()).c_str());
-
-            // Capture Mode selection
-            const char* modeOptions[] = { "Auto (continuous)", "Hotkey (single frame)" };
-            int currentMode = static_cast<int>(m_config.captureMode);
-            ImGui::SetNextItemWidth(250.0f);
-            if (ImGui::Combo("Capture Mode", &currentMode, modeOptions, IM_ARRAYSIZE(modeOptions)))
-            {
-                m_config.captureMode = static_cast<CaptureMode>(currentMode);
-                OnCaptureModeChanged();
-            }
-
-            // Scale ROI
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(120.0f);
-            ImGui::DragInt("Scale ROI (%)", &m_config.scaleRoi, 1.0f, 10, 200);
-            if (m_config.scaleRoi <= 0) m_config.scaleRoi = 100;
-
-            // Mode-specific configuration
-            if (m_config.captureMode == CaptureMode::Auto)
-            {
-                ImGui::SetNextItemWidth(120.0f);
-                ImGui::DragInt("Interval (ms)", &m_config.captureIntervalMs, 50.0f, 100, 10000);
-                if (m_config.captureIntervalMs <= 0) m_config.captureIntervalMs = 1000;
-
-                ImGui::SameLine();
-                std::string pauseHotkeyStr = m_recordingHotkeyType == 2 ? "Press a key..." : WideToUtf8(HotkeyToString(m_config.pauseHotkeyVk, m_config.pauseHotkeyMod));
-                ImGui::Text("Pause Hotkey:"); ImGui::SameLine();
-                if (ImGui::Button(pauseHotkeyStr.c_str(), ImVec2(130, 0)))
-                {
-                    m_recordingHotkeyType = 2;
-                }
-            }
-            else
-            {
-                std::string hotkeyStr = m_recordingHotkeyType == 1 ? "Press a key..." : WideToUtf8(HotkeyToString(m_config.hotkeyVk, m_config.hotkeyMod));
-                ImGui::Text("Capture Hotkey:"); ImGui::SameLine();
-                if (ImGui::Button(hotkeyStr.c_str(), ImVec2(130, 0)))
-                {
-                    m_recordingHotkeyType = 1;
-                }
-            }
-
-            ImGui::Separator();
-            ImGui::TextDisabled("ROI Idle Text Detection");
-
-            if (ImGui::Checkbox("Enable ROI Idle Detection", &m_config.roiActive))
-            {
-                OnRoiActiveChanged();
-            }
-            if (m_config.roiActive)
-            {
-                ImGui::SameLine();
-                ImGui::SetNextItemWidth(120.0f);
-                ImGui::DragInt("Idle Timeout (ms)", &m_config.roiTimeoutMs, 100.0f, 500, 30000);
-                if (m_config.roiTimeoutMs <= 0) m_config.roiTimeoutMs = 3000;
-
-                ImGui::SameLine();
-                RECT roi = m_config.roiRect;
-                ImGui::Text("ROI Rect (X,Y,W,H): %ld, %ld, %ld, %ld", roi.left, roi.top, roi.right - roi.left, roi.bottom - roi.top);
-            }
-
-            ImGui::Separator();
-            ImGui::TextDisabled("Overlay & Typography");
-
-            const char* dispOptions[] = { "In-Place (Default)", "Overlay Window" };
-            int currentDisp = (m_config.displayMode == DisplayMode::InPlace) ? 0 : 1;
-            ImGui::SetNextItemWidth(200.0f);
-            if (ImGui::Combo("Display Mode", &currentDisp, dispOptions, IM_ARRAYSIZE(dispOptions)))
-            {
-                m_config.displayMode = (currentDisp == 0) ? DisplayMode::InPlace : DisplayMode::Overlay;
-                OnDisplayModeChanged();
-            }
-
-            if (m_config.displayMode == DisplayMode::Overlay)
-            {
-                ImGui::SameLine();
-                ImGui::Text("Pos: X: %ld   Y: %ld", m_config.overlayPos.x, m_config.overlayPos.y);
-
-                ImGui::SetNextItemWidth(150.0f);
-                ImGui::InputText("Font Name", m_fontNameBuf, sizeof(m_fontNameBuf));
-                
-                ImGui::SameLine();
-                ImGui::SetNextItemWidth(80.0f);
-                ImGui::DragInt("Size", &m_config.fontSize, 1.0f, 8, 72);
-                if (m_config.fontSize <= 0) m_config.fontSize = 24;
-
-                ImGui::SameLine();
-                ImGui::SetNextItemWidth(50.0f);
-                if (ImGui::ColorEdit3("Text Color", m_textColorFloat, ImGuiColorEditFlags_NoInputs))
-                {
-                    m_config.textColor = FloatToColorref(m_textColorFloat);
-                    SyncHelperWindows();
-                }
-
-                ImGui::Checkbox("Shadow", &m_config.shadowEnabled);
-                if (m_config.shadowEnabled)
-                {
-                    ImGui::SameLine();
-                    ImGui::SetNextItemWidth(50.0f);
-                    if (ImGui::ColorEdit3("Shadow Color", m_shadowColorFloat, ImGuiColorEditFlags_NoInputs))
-                    {
-                        m_config.shadowColor = FloatToColorref(m_shadowColorFloat);
-                        SyncHelperWindows();
-                    }
-                }
-
-                ImGui::SameLine();
-                ImGui::Checkbox("Stroke", &m_config.strokeEnabled);
-                if (m_config.strokeEnabled)
-                {
-                    ImGui::SameLine();
-                    ImGui::SetNextItemWidth(50.0f);
-                    if (ImGui::ColorEdit3("Stroke Color", m_strokeColorFloat, ImGuiColorEditFlags_NoInputs))
-                    {
-                        m_config.strokeColor = FloatToColorref(m_strokeColorFloat);
-                        SyncHelperWindows();
-                    }
-                    ImGui::SameLine();
-                    ImGui::SetNextItemWidth(80.0f);
-                    ImGui::DragFloat("Width", &m_config.strokeWidth, 0.1f, 1.0f, 10.0f, "%.1f");
-                    if (m_config.strokeWidth <= 0.0f) m_config.strokeWidth = 1.0f;
-                }
-            }
-
+            RenderRealtimeTab();
             ImGui::EndTabItem();
         }
 
         // ----------------- REGION TAB -----------------
         if (ImGui::BeginTabItem("Region"))
         {
-            ImGui::TextWrapped("Press the hotkey to select a screen region for quick translation.");
-            ImGui::Spacing();
-
-            std::string regHotkeyStr = m_recordingHotkeyType == 4 ? "Press a key..." : WideToUtf8(HotkeyToString(m_config.regionHotkeyVk, m_config.regionHotkeyMod));
-            ImGui::Text("Selection Hotkey:"); ImGui::SameLine();
-            if (ImGui::Button(regHotkeyStr.c_str(), ImVec2(150, 0)))
-            {
-                m_recordingHotkeyType = 4;
-            }
-
-            ImGui::Spacing();
-            ImGui::TextWrapped("After selecting a region, the app will OCR and translate the text. Press any key to dismiss the result overlay.");
-
+            RenderRegionTab();
             ImGui::EndTabItem();
         }
 
         // ----------------- TRANSLATE TAB -----------------
         if (ImGui::BeginTabItem("Translate"))
         {
-            const char* provOptions[] = { "DeepSeek", "Google Translate" };
-            int currentProv = (m_config.providerType == TranslateProvider::DeepSeek) ? 0 : 1;
-            ImGui::SetNextItemWidth(220.0f);
-            if (ImGui::Combo("Provider", &currentProv, provOptions, IM_ARRAYSIZE(provOptions)))
-            {
-                m_config.providerType = (currentProv == 0) ? TranslateProvider::DeepSeek : TranslateProvider::Google;
-                OnProviderChanged();
-            }
-
-            ImGui::SameLine();
-
-            const char* const commonLangs[] = {
-                "Vietnamese", "English", "Japanese", "Chinese (Simplified)", "Chinese (Traditional)",
-                "Korean", "French", "German", "Russian", "Spanish", "Portuguese", "Italian",
-                "Arabic", "Thai", "Indonesian", "Hindi", "Turkish"
-            };
-            int langIdx = 0;
-            std::string langUtf8 = WideToUtf8(m_config.targetLanguage);
-            for (int i = 0; i < IM_ARRAYSIZE(commonLangs); ++i)
-            {
-                if (langUtf8 == commonLangs[i])
-                {
-                    langIdx = i;
-                    break;
-                }
-            }
-            ImGui::SetNextItemWidth(180.0f);
-            if (ImGui::Combo("Target Lang", &langIdx, commonLangs, IM_ARRAYSIZE(commonLangs)))
-            {
-                m_config.targetLanguage = Utf8ToWide(commonLangs[langIdx]);
-            }
-
-            if (m_config.providerType == TranslateProvider::DeepSeek)
-            {
-                ImGui::SetNextItemWidth(180.0f);
-                ImGui::InputText("API Model", m_apiModelBuf, sizeof(m_apiModelBuf));
-                
-                ImGui::SameLine();
-                ImGui::SetNextItemWidth(250.0f);
-                ImGui::InputText("API Key", m_apiKeyBuf, sizeof(m_apiKeyBuf), ImGuiInputTextFlags_Password);
-            }
-
-            ImGui::Spacing();
-            if (ImGui::Button("Test Connection", ImVec2(150, 0)))
-            {
-                OnTestApi();
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Save Settings", ImVec2(150, 0)))
-            {
-                OnSave();
-            }
-
+            RenderTranslateTab();
             ImGui::EndTabItem();
         }
 
         // ----------------- SYSTEM TAB -----------------
         if (ImGui::BeginTabItem("System"))
         {
-            ImGui::TextDisabled("System Hotkeys");
-            
-            std::string toggleStr = m_recordingHotkeyType == 3 ? "Press a key..." : WideToUtf8(HotkeyToString(m_config.toggleWndVk, m_config.toggleWndMod));
-            ImGui::Text("Toggle Settings Window:");
-            if (ImGui::Button(toggleStr.c_str(), ImVec2(150, 0)))
-            {
-                m_recordingHotkeyType = 3;
-            }
-
-            ImGui::Text("OCR Engine:");
-            const char* ocrOptions[] = { "PaddleOCR", "Windows OCR (Default)" };
-            int currentOcr = (m_config.ocrType == OcrType::PaddleOCR) ? 0 : 1;
-            ImGui::SetNextItemWidth(260.0f);
-            if (ImGui::Combo("OCR Provider", &currentOcr, ocrOptions, IM_ARRAYSIZE(ocrOptions)))
-            {
-                m_config.ocrType = (currentOcr == 0) ? OcrType::PaddleOCR : OcrType::WindowsOCR;
-            }
-
+            RenderSystemTab();
             ImGui::EndTabItem();
         }
 
         // ----------------- OUTPUT LOG TAB -----------------
         if (ImGui::BeginTabItem("Output Log"))
         {
-            ImGui::TextDisabled("System Output Log");
-            ImGui::Spacing();
-            
-            ImGui::BeginChild("LogArea", ImVec2(0, -10), true);
-            for (const auto& log : m_logs)
-            {
-                ImGui::TextUnformatted(WideToUtf8(log).c_str());
-            }
-            if (m_scrollToBottom)
-            {
-                ImGui::SetScrollHereY(1.0f);
-                m_scrollToBottom = false;
-            }
-            ImGui::EndChild();
-
+            RenderOutputLogTab();
             ImGui::EndTabItem();
         }
 
         // ----------------- ABOUT TAB -----------------
-        #ifndef APP_VERSION
-        #define APP_VERSION "v0.0.0-dev"
-        #endif
-
         ImGuiTabItemFlags aboutFlags = 0;
         if (m_switchToAboutTab.load())
         {
@@ -1038,112 +730,7 @@ void SettingsWindow::RenderUI()
 
         if (ImGui::BeginTabItem("About", nullptr, aboutFlags))
         {
-            ImGui::TextDisabled("Software Information");
-            ImGui::Spacing();
-            
-            std::string verStr = APP_VERSION;
-            ImGui::Text("Current Version: %s", verStr.c_str());
-            ImGui::SameLine(ImGui::GetWindowWidth() - 150.0f);
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.6f, 1.0f, 1.0f));
-            if (ImGui::Selectable("GitHub Repo"))
-            {
-                ShellExecuteW(nullptr, L"open", L"https://github.com/wawahuy/light-translate", nullptr, nullptr, SW_SHOWNORMAL);
-            }
-            ImGui::PopStyleColor();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            // Render UI depending on the current update state.
-            ::UpdateStatus status = m_updater.GetStatus();
-            
-            if (status == ::UpdateStatus::Idle)
-            {
-                if (ImGui::Button("Check for Update", ImVec2(150, 0)))
-                {
-                    m_updater.CheckForUpdateAsync(APP_VERSION);
-                }
-            }
-            else if (status == ::UpdateStatus::Checking)
-            {
-                ImGui::Text("Checking for updates...");
-                static float dotTimer = 0.0f;
-                dotTimer += ImGui::GetIO().DeltaTime;
-                int dots = static_cast<int>(dotTimer * 2.0f) % 4;
-                ImGui::SameLine();
-                if (dots == 0) ImGui::Text("");
-                else if (dots == 1) ImGui::Text(".");
-                else if (dots == 2) ImGui::Text("..");
-                else if (dots == 3) ImGui::Text("...");
-            }
-            else if (status == ::UpdateStatus::UpToDate)
-            {
-                ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Your application is up-to-date!");
-                ImGui::Spacing();
-                if (ImGui::Button("Check Again", ImVec2(120, 0)))
-                {
-                    m_updater.CheckForUpdateAsync(APP_VERSION);
-                }
-            }
-            else if (status == ::UpdateStatus::UpdateAvailable)
-            {
-                ImGui::TextColored(ImVec4(0.9f, 0.7f, 0.1f, 1.0f), "A new version is available: %s", m_updater.GetLatestVersion().c_str());
-                ImGui::Spacing();
-                
-                ImGui::Text("Changelog:");
-                ImGui::BeginChild("ChangelogBox", ImVec2(0, 150), true);
-                ImGui::TextWrapped("%s", m_updater.GetReleaseNotes().c_str());
-                ImGui::EndChild();
-                ImGui::Spacing();
-                
-                if (ImGui::Button("Download and Update", ImVec2(200, 0)))
-                {
-                    m_updater.DownloadUpdateAsync();
-                }
-            }
-            else if (status == ::UpdateStatus::Downloading)
-            {
-                float progress = m_updater.GetDownloadProgress();
-                ImGui::Text("Downloading update...");
-                ImGui::ProgressBar(progress, ImVec2(-1, 25));
-                ImGui::Spacing();
-                if (ImGui::Button("Cancel", ImVec2(100, 0)))
-                {
-                    m_updater.CancelDownload();
-                }
-            }
-            else if (status == ::UpdateStatus::DownloadSuccess)
-            {
-                ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Download complete!");
-                ImGui::Text("The application will restart to complete the update.");
-                ImGui::Spacing();
-                if (ImGui::Button("Restart & Update Now", ImVec2(200, 0)))
-                {
-                    m_updater.InstallAndRestart();
-                }
-            }
-            else if (status == ::UpdateStatus::DownloadFailed)
-            {
-                ImGui::TextColored(ImVec4(0.9f, 0.2f, 0.2f, 1.0f), "Download failed.");
-                std::string err = WideToUtf8(m_updater.GetErrorMessage());
-                ImGui::TextWrapped("Error: %s", err.c_str());
-                ImGui::Spacing();
-                if (ImGui::Button("Retry", ImVec2(120, 0)))
-                {
-                    m_updater.DownloadUpdateAsync();
-                }
-            }
-            else if (status == ::UpdateStatus::Error)
-            {
-                ImGui::TextColored(ImVec4(0.9f, 0.2f, 0.2f, 1.0f), "An error occurred.");
-                std::string err = WideToUtf8(m_updater.GetErrorMessage());
-                ImGui::TextWrapped("Error: %s", err.c_str());
-                ImGui::Spacing();
-                if (ImGui::Button("Try Again", ImVec2(120, 0)))
-                {
-                    m_updater.CheckForUpdateAsync(APP_VERSION);
-                }
-            }
-
+            RenderAboutTab();
             ImGui::EndTabItem();
         }
 
@@ -1151,6 +738,452 @@ void SettingsWindow::RenderUI()
     }
 
     ImGui::End();
+}
+
+// -----------------------------------------------------------------------------
+//  Tab Renderers
+// -----------------------------------------------------------------------------
+
+void SettingsWindow::RenderAppTab()
+{
+    ImGui::TextDisabled("Application Mode");
+    ImGui::Spacing();
+
+    ImGui::RadioButton("Windows Overlay (Legacy)", &m_appMode, 0);
+    ImGui::SameLine();
+    ImGui::RadioButton("In-Game Hooking (Advanced)", &m_appMode, 1);
+
+    ImGui::Spacing();
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
+    if (m_appMode == 0)
+    {
+        ImGui::TextWrapped("Description: Windows Overlay (Legacy)\n"
+                           "• Requires target game/application to run in Windowed or Borderless mode.\n"
+                           "• Renders translation text on a transparent top-most system overlay window.\n"
+                           "• Maximum compatibility across various applications and easy setup.");
+    }
+    else if (m_appMode == 1)
+    {
+        ImGui::TextWrapped("Description: In-Game Hooking (Advanced)\n"
+                           "• Injects directly into graphics rendering pipeline (DX11/DX12/OpenGL/Vulkan).\n"
+                           "• Renders translation text inside the game frame (works in Exclusive Fullscreen).\n"
+                           "• Maximum rendering performance, zero window positioning lag, and seamless overlay.");
+    }
+    ImGui::PopStyleColor();
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::TextDisabled("Control Panel");
+    ImGui::Spacing();
+
+    if (m_running)
+    {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.15f, 0.15f, 1.00f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.25f, 0.25f, 1.00f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.7f, 0.10f, 0.10f, 1.00f));
+        if (ImGui::Button("STOP", ImVec2(200, 45)))
+        {
+            OnStop();
+        }
+        ImGui::PopStyleColor(3);
+    }
+    else
+    {
+        if (m_appMode == 1)
+        {
+            ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.1f, 1.0f), "This mode will be supported in version 3.0.0.");
+            ImGui::Spacing();
+            ImGui::BeginDisabled();
+        }
+
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.6f, 0.15f, 1.00f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.7f, 0.25f, 1.00f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.5f, 0.10f, 1.00f));
+        if (ImGui::Button("START", ImVec2(200, 45)))
+        {
+            OnStart();
+        }
+        ImGui::PopStyleColor(3);
+
+        if (m_appMode == 1)
+        {
+            ImGui::EndDisabled();
+        }
+    }
+
+    ImGui::Spacing();
+}
+
+void SettingsWindow::RenderRealtimeTab()
+{
+    ImGui::TextDisabled("Capture Settings");
+    
+    // Monitor index selection
+    const char* monitorOptions[] = { "0 - Primary", "1 - Second", "2 - Third" };
+    int currentMon = std::min(m_config.monitorIndex, 2);
+    ImGui::SetNextItemWidth(150.0f);
+    if (ImGui::Combo("Monitor", &currentMon, monitorOptions, IM_ARRAYSIZE(monitorOptions)))
+    {
+        m_config.monitorIndex = currentMon;
+    }
+
+    // Capture region display/reset
+    ImGui::SameLine();
+    if (ImGui::Button("Reset Capture Region"))
+    {
+        OnSelectRegion();
+    }
+    ImGui::SameLine();
+    ImGui::Text("Region: %s", WideToUtf8(GetRegionInfoText()).c_str());
+
+    // Capture Mode selection
+    const char* modeOptions[] = { "Auto (continuous)", "Hotkey (single frame)" };
+    int currentMode = static_cast<int>(m_config.captureMode);
+    ImGui::SetNextItemWidth(250.0f);
+    if (ImGui::Combo("Capture Mode", &currentMode, modeOptions, IM_ARRAYSIZE(modeOptions)))
+    {
+        m_config.captureMode = static_cast<CaptureMode>(currentMode);
+        OnCaptureModeChanged();
+    }
+
+    // Scale ROI
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(120.0f);
+    ImGui::DragInt("Scale ROI (%)", &m_config.scaleRoi, 1.0f, 10, 200);
+    if (m_config.scaleRoi <= 0) m_config.scaleRoi = 100;
+
+    // Mode-specific configuration
+    if (m_config.captureMode == CaptureMode::Auto)
+    {
+        ImGui::SetNextItemWidth(120.0f);
+        ImGui::DragInt("Interval (ms)", &m_config.captureIntervalMs, 50.0f, 100, 10000);
+        if (m_config.captureIntervalMs <= 0) m_config.captureIntervalMs = 1000;
+
+        ImGui::SameLine();
+        std::string pauseHotkeyStr = m_recordingHotkeyType == 2 ? "Press a key..." : WideToUtf8(HotkeyToString(m_config.pauseHotkeyVk, m_config.pauseHotkeyMod));
+        ImGui::Text("Pause Hotkey:"); ImGui::SameLine();
+        if (ImGui::Button(pauseHotkeyStr.c_str(), ImVec2(130, 0)))
+        {
+            m_recordingHotkeyType = 2;
+        }
+    }
+    else
+    {
+        std::string hotkeyStr = m_recordingHotkeyType == 1 ? "Press a key..." : WideToUtf8(HotkeyToString(m_config.hotkeyVk, m_config.hotkeyMod));
+        ImGui::Text("Capture Hotkey:"); ImGui::SameLine();
+        if (ImGui::Button(hotkeyStr.c_str(), ImVec2(130, 0)))
+        {
+            m_recordingHotkeyType = 1;
+        }
+    }
+
+    ImGui::Separator();
+    ImGui::TextDisabled("ROI Idle Text Detection");
+
+    if (ImGui::Checkbox("Enable ROI Idle Detection", &m_config.roiActive))
+    {
+        OnRoiActiveChanged();
+    }
+    if (m_config.roiActive)
+    {
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(120.0f);
+        ImGui::DragInt("Idle Timeout (ms)", &m_config.roiTimeoutMs, 100.0f, 500, 30000);
+        if (m_config.roiTimeoutMs <= 0) m_config.roiTimeoutMs = 3000;
+
+        ImGui::SameLine();
+        RECT roi = m_config.roiRect;
+        ImGui::Text("ROI Rect (X,Y,W,H): %ld, %ld, %ld, %ld", roi.left, roi.top, roi.right - roi.left, roi.bottom - roi.top);
+    }
+
+    ImGui::Separator();
+    ImGui::TextDisabled("Overlay & Typography");
+
+    const char* dispOptions[] = { "In-Place (Default)", "Overlay Window" };
+    int currentDisp = (m_config.displayMode == DisplayMode::InPlace) ? 0 : 1;
+    ImGui::SetNextItemWidth(200.0f);
+    if (ImGui::Combo("Display Mode", &currentDisp, dispOptions, IM_ARRAYSIZE(dispOptions)))
+    {
+        m_config.displayMode = (currentDisp == 0) ? DisplayMode::InPlace : DisplayMode::Overlay;
+        OnDisplayModeChanged();
+    }
+
+    if (m_config.displayMode == DisplayMode::Overlay)
+    {
+        ImGui::SameLine();
+        ImGui::Text("Pos: X: %ld   Y: %ld", m_config.overlayPos.x, m_config.overlayPos.y);
+
+        ImGui::SetNextItemWidth(150.0f);
+        ImGui::InputText("Font Name", m_fontNameBuf, sizeof(m_fontNameBuf));
+        
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(80.0f);
+        ImGui::DragInt("Size", &m_config.fontSize, 1.0f, 8, 72);
+        if (m_config.fontSize <= 0) m_config.fontSize = 24;
+
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(50.0f);
+        if (ImGui::ColorEdit3("Text Color", m_textColorFloat, ImGuiColorEditFlags_NoInputs))
+        {
+            m_config.textColor = FloatToColorref(m_textColorFloat);
+            SyncHelperWindows();
+        }
+
+        ImGui::Checkbox("Shadow", &m_config.shadowEnabled);
+        if (m_config.shadowEnabled)
+        {
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(50.0f);
+            if (ImGui::ColorEdit3("Shadow Color", m_shadowColorFloat, ImGuiColorEditFlags_NoInputs))
+            {
+                m_config.shadowColor = FloatToColorref(m_shadowColorFloat);
+                SyncHelperWindows();
+            }
+        }
+
+        ImGui::SameLine();
+        ImGui::Checkbox("Stroke", &m_config.strokeEnabled);
+        if (m_config.strokeEnabled)
+        {
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(50.0f);
+            if (ImGui::ColorEdit3("Stroke Color", m_strokeColorFloat, ImGuiColorEditFlags_NoInputs))
+            {
+                m_config.strokeColor = FloatToColorref(m_strokeColorFloat);
+                SyncHelperWindows();
+            }
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(80.0f);
+            ImGui::DragFloat("Width", &m_config.strokeWidth, 0.1f, 1.0f, 10.0f, "%.1f");
+            if (m_config.strokeWidth <= 0.0f) m_config.strokeWidth = 1.0f;
+        }
+    }
+}
+
+void SettingsWindow::RenderRegionTab()
+{
+    ImGui::TextWrapped("Press the hotkey to select a screen region for quick translation.");
+    ImGui::Spacing();
+
+    std::string regHotkeyStr = m_recordingHotkeyType == 4 ? "Press a key..." : WideToUtf8(HotkeyToString(m_config.regionHotkeyVk, m_config.regionHotkeyMod));
+    ImGui::Text("Selection Hotkey:"); ImGui::SameLine();
+    if (ImGui::Button(regHotkeyStr.c_str(), ImVec2(150, 0)))
+    {
+        m_recordingHotkeyType = 4;
+    }
+
+    ImGui::Spacing();
+    ImGui::TextWrapped("After selecting a region, the app will OCR and translate the text. Press any key to dismiss the result overlay.");
+}
+
+void SettingsWindow::RenderTranslateTab()
+{
+    const char* provOptions[] = { "DeepSeek", "Google Translate" };
+    int currentProv = (m_config.providerType == TranslateProvider::DeepSeek) ? 0 : 1;
+    ImGui::SetNextItemWidth(220.0f);
+    if (ImGui::Combo("Provider", &currentProv, provOptions, IM_ARRAYSIZE(provOptions)))
+    {
+        m_config.providerType = (currentProv == 0) ? TranslateProvider::DeepSeek : TranslateProvider::Google;
+        OnProviderChanged();
+    }
+
+    ImGui::SameLine();
+
+    const char* const commonLangs[] = {
+        "Vietnamese", "English", "Japanese", "Chinese (Simplified)", "Chinese (Traditional)",
+        "Korean", "French", "German", "Russian", "Spanish", "Portuguese", "Italian",
+        "Arabic", "Thai", "Indonesian", "Hindi", "Turkish"
+    };
+    int langIdx = 0;
+    std::string langUtf8 = WideToUtf8(m_config.targetLanguage);
+    for (int i = 0; i < IM_ARRAYSIZE(commonLangs); ++i)
+    {
+        if (langUtf8 == commonLangs[i])
+        {
+            langIdx = i;
+            break;
+        }
+    }
+    ImGui::SetNextItemWidth(180.0f);
+    if (ImGui::Combo("Target Lang", &langIdx, commonLangs, IM_ARRAYSIZE(commonLangs)))
+    {
+        m_config.targetLanguage = Utf8ToWide(commonLangs[langIdx]);
+    }
+
+    if (m_config.providerType == TranslateProvider::DeepSeek)
+    {
+        ImGui::SetNextItemWidth(180.0f);
+        ImGui::InputText("API Model", m_apiModelBuf, sizeof(m_apiModelBuf));
+        
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(250.0f);
+        ImGui::InputText("API Key", m_apiKeyBuf, sizeof(m_apiKeyBuf), ImGuiInputTextFlags_Password);
+    }
+
+    ImGui::Spacing();
+    if (ImGui::Button("Test Connection", ImVec2(150, 0)))
+    {
+        OnTestApi();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Save Settings", ImVec2(150, 0)))
+    {
+        OnSave();
+    }
+}
+
+void SettingsWindow::RenderSystemTab()
+{
+    ImGui::TextDisabled("System Hotkeys");
+    
+    std::string toggleStr = m_recordingHotkeyType == 3 ? "Press a key..." : WideToUtf8(HotkeyToString(m_config.toggleWndVk, m_config.toggleWndMod));
+    ImGui::Text("Toggle Settings Window:");
+    if (ImGui::Button(toggleStr.c_str(), ImVec2(150, 0)))
+    {
+        m_recordingHotkeyType = 3;
+    }
+
+    ImGui::Text("OCR Engine:");
+    const char* ocrOptions[] = { "PaddleOCR", "Windows OCR (Default)" };
+    int currentOcr = (m_config.ocrType == OcrType::PaddleOCR) ? 0 : 1;
+    ImGui::SetNextItemWidth(260.0f);
+    if (ImGui::Combo("OCR Provider", &currentOcr, ocrOptions, IM_ARRAYSIZE(ocrOptions)))
+    {
+        m_config.ocrType = (currentOcr == 0) ? OcrType::PaddleOCR : OcrType::WindowsOCR;
+    }
+}
+
+void SettingsWindow::RenderOutputLogTab()
+{
+    ImGui::TextDisabled("System Output Log");
+    ImGui::Spacing();
+    
+    ImGui::BeginChild("LogArea", ImVec2(0, -10), true);
+    for (const auto& log : m_logs)
+    {
+        ImGui::TextUnformatted(WideToUtf8(log).c_str());
+    }
+    if (m_scrollToBottom)
+    {
+        ImGui::SetScrollHereY(1.0f);
+        m_scrollToBottom = false;
+    }
+    ImGui::EndChild();
+}
+
+void SettingsWindow::RenderAboutTab()
+{
+    #ifndef APP_VERSION
+    #define APP_VERSION "v0.0.0-dev"
+    #endif
+
+    ImGui::TextDisabled("Software Information");
+    ImGui::Spacing();
+    
+    std::string verStr = APP_VERSION;
+    ImGui::Text("Current Version: %s", verStr.c_str());
+    ImGui::SameLine(ImGui::GetWindowWidth() - 150.0f);
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.6f, 1.0f, 1.0f));
+    if (ImGui::Selectable("GitHub Repo"))
+    {
+        ShellExecuteW(nullptr, L"open", L"https://github.com/wawahuy/light-translate", nullptr, nullptr, SW_SHOWNORMAL);
+    }
+    ImGui::PopStyleColor();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Render UI depending on the current update state.
+    ::UpdateStatus status = m_updater.GetStatus();
+    
+    if (status == ::UpdateStatus::Idle)
+    {
+        if (ImGui::Button("Check for Update", ImVec2(150, 0)))
+        {
+            m_updater.CheckForUpdateAsync(APP_VERSION);
+        }
+    }
+    else if (status == ::UpdateStatus::Checking)
+    {
+        ImGui::Text("Checking for updates...");
+        static float dotTimer = 0.0f;
+        dotTimer += ImGui::GetIO().DeltaTime;
+        int dots = static_cast<int>(dotTimer * 2.0f) % 4;
+        ImGui::SameLine();
+        if (dots == 0) ImGui::Text("");
+        else if (dots == 1) ImGui::Text(".");
+        else if (dots == 2) ImGui::Text("..");
+        else if (dots == 3) ImGui::Text("...");
+    }
+    else if (status == ::UpdateStatus::UpToDate)
+    {
+        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Your application is up-to-date!");
+        ImGui::Spacing();
+        if (ImGui::Button("Check Again", ImVec2(120, 0)))
+        {
+            m_updater.CheckForUpdateAsync(APP_VERSION);
+        }
+    }
+    else if (status == ::UpdateStatus::UpdateAvailable)
+    {
+        ImGui::TextColored(ImVec4(0.9f, 0.7f, 0.1f, 1.0f), "A new version is available: %s", m_updater.GetLatestVersion().c_str());
+        ImGui::Spacing();
+        
+        ImGui::Text("Changelog:");
+        ImGui::BeginChild("ChangelogBox", ImVec2(0, 150), true);
+        ImGui::TextWrapped("%s", m_updater.GetReleaseNotes().c_str());
+        ImGui::EndChild();
+        ImGui::Spacing();
+        
+        if (ImGui::Button("Download and Update", ImVec2(200, 0)))
+        {
+            m_updater.DownloadUpdateAsync();
+        }
+    }
+    else if (status == ::UpdateStatus::Downloading)
+    {
+        float progress = m_updater.GetDownloadProgress();
+        ImGui::Text("Downloading update...");
+        ImGui::ProgressBar(progress, ImVec2(-1, 25));
+        ImGui::Spacing();
+        if (ImGui::Button("Cancel", ImVec2(100, 0)))
+        {
+            m_updater.CancelDownload();
+        }
+    }
+    else if (status == ::UpdateStatus::DownloadSuccess)
+    {
+        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Download complete!");
+        ImGui::Text("The application will restart to complete the update.");
+        ImGui::Spacing();
+        if (ImGui::Button("Restart & Update Now", ImVec2(200, 0)))
+        {
+            m_updater.InstallAndRestart();
+        }
+    }
+    else if (status == ::UpdateStatus::DownloadFailed)
+    {
+        ImGui::TextColored(ImVec4(0.9f, 0.2f, 0.2f, 1.0f), "Download failed.");
+        std::string err = WideToUtf8(m_updater.GetErrorMessage());
+        ImGui::TextWrapped("Error: %s", err.c_str());
+        ImGui::Spacing();
+        if (ImGui::Button("Retry", ImVec2(120, 0)))
+        {
+            m_updater.DownloadUpdateAsync();
+        }
+    }
+    else if (status == ::UpdateStatus::Error)
+    {
+        ImGui::TextColored(ImVec4(0.9f, 0.2f, 0.2f, 1.0f), "An error occurred.");
+        std::string err = WideToUtf8(m_updater.GetErrorMessage());
+        ImGui::TextWrapped("Error: %s", err.c_str());
+        ImGui::Spacing();
+        if (ImGui::Button("Try Again", ImVec2(120, 0)))
+        {
+            m_updater.CheckForUpdateAsync(APP_VERSION);
+        }
+    }
 }
 
 void SettingsWindow::ApplyImGuiStyle()

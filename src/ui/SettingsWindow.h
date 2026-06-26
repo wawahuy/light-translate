@@ -48,6 +48,15 @@ private:
     void ApplyImGuiStyle();
     void LoadFonts();
 
+    // -- Tab Renderers ---------------------------------------------------------
+    void RenderAppTab();
+    void RenderRealtimeTab();
+    void RenderRegionTab();
+    void RenderTranslateTab();
+    void RenderSystemTab();
+    void RenderOutputLogTab();
+    void RenderAboutTab();
+
     // -- Capture mode & Display changes ----------------------------------------
     void OnCaptureModeChanged();
     void OnDisplayModeChanged();
