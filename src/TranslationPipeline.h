@@ -32,7 +32,7 @@ public:
                        ITranslationOutput* overlay);
 
     // Set OCR Engine configuration.
-    void SetOcrConfig(OcrType type, const std::wstring& detDir = L"", const std::wstring& recDir = L"");
+    void SetOcrConfig(OcrType type, const std::wstring& detDir = L"", const std::wstring& recDir = L"", const std::wstring& langTag = L"");
 
     void SetDisplayMode(DisplayMode mode) { m_displayMode = mode; }
 
@@ -114,6 +114,7 @@ private:
     OcrType              m_ocrType = OcrType::PaddleOCR;
     std::wstring         m_ocrDetModelDir;
     std::wstring         m_ocrRecModelDir;
+    std::wstring         m_ocrLangTag = L"Default";
     std::unique_ptr<IOcrEngine> m_ocrEngine;
     BoxDiffDetector      m_boxDiffDetector;
 

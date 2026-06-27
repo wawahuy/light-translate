@@ -4,6 +4,7 @@
 #include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.Storage.Streams.h>
 #include <winrt/Windows.Graphics.Imaging.h>
+#include <winrt/Windows.Globalization.h>
 #include <opencv2/imgproc.hpp>
 #include <stdexcept>
 #include <sstream>
@@ -16,7 +17,7 @@ using namespace Windows::Storage::Streams;
 using namespace Windows::Graphics::Imaging;
 using namespace Windows::Foundation;
 
-WindowsOcrEngine::WindowsOcrEngine() = default;
+WindowsOcrEngine::WindowsOcrEngine(const std::wstring& langTag) : m_langTag(langTag) {}
 
 WindowsOcrEngine::~WindowsOcrEngine()
 {
@@ -32,10 +33,19 @@ bool WindowsOcrEngine::Initialize()
         // Initialise COM thread apartment
         winrt::init_apartment(winrt::apartment_type::multi_threaded);
         
-        m_ocrEngine = winrt::Windows::Media::Ocr::OcrEngine::TryCreateFromUserProfileLanguages();
+        if (m_langTag.empty() || m_langTag == L"Auto" || m_langTag == L"Default")
+        {
+            m_ocrEngine = winrt::Windows::Media::Ocr::OcrEngine::TryCreateFromUserProfileLanguages();
+        }
+        else
+        {
+            winrt::Windows::Globalization::Language lang(m_langTag);
+            m_ocrEngine = winrt::Windows::Media::Ocr::OcrEngine::TryCreateFromLanguage(lang);
+        }
+
         if (!m_ocrEngine)
         {
-            throw std::runtime_error("Failed to create Windows OcrEngine (UserProfileLanguages check failed or no language packs installed).");
+            throw std::runtime_error("Failed to create Windows OcrEngine (requested language check failed or no language packs installed).");
         }
         m_initialized = true;
     }

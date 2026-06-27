@@ -7,7 +7,7 @@
 class WindowsOcrEngine : public IOcrEngine
 {
 public:
-    WindowsOcrEngine();
+    WindowsOcrEngine(const std::wstring& langTag = L"");
     ~WindowsOcrEngine() override;
 
     // IOcrEngine overrides
@@ -21,4 +21,5 @@ private:
     bool m_initialized = false;
     winrt::Windows::Media::Ocr::OcrEngine m_ocrEngine = nullptr;
     winrt::Windows::Graphics::Imaging::SoftwareBitmap m_cachedSoftwareBitmap = nullptr;
+    std::wstring m_langTag;
 };

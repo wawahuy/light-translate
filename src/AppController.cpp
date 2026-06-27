@@ -82,7 +82,7 @@ bool AppController::Start(HWND hwndOwner, ITranslationOutput* overlay)
         }
         std::wstring detModelDir = baseDir + L"models/PP-OCRv5_mobile_det_infer";
         std::wstring recModelDir = baseDir + L"models/PP-OCRv5_mobile_rec_infer";
-        m_pipeline.SetOcrConfig(m_config.ocrType, detModelDir, recModelDir);
+        m_pipeline.SetOcrConfig(m_config.ocrType, detModelDir, recModelDir, m_config.sourceLanguage);
     }
 
     m_pipeline.SetScaleRoi(m_config.scaleRoi);
@@ -158,7 +158,7 @@ std::wstring AppController::PerformRegionCaptureAndTranslate(const cv::Mat& regi
         std::wstring recModelDir = baseDir + L"models/PP-OCRv5_mobile_rec_infer";
 
         if (OnStatus) OnStatus(L"Initializing OCR modules for region selection...");
-        m_regionOcr = OcrFactory::CreateEngine(m_config.ocrType, detModelDir, recModelDir);
+        m_regionOcr = OcrFactory::CreateEngine(m_config.ocrType, detModelDir, recModelDir, m_config.sourceLanguage);
         if (!m_regionOcr || !m_regionOcr->Initialize())
         {
             if (OnStatus) OnStatus(L"Region OCR Error: Failed to initialize models.");

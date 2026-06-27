@@ -50,6 +50,7 @@ void AppConfig::Save(const std::wstring& iniPath) const
     WriteStr(L"API", L"Model",  apiModel, f);
     WriteStr(L"API", L"Key",    apiKey, f);
     WriteStr(L"API", L"TargetLanguage", targetLanguage, f);
+    WriteStr(L"API", L"SourceLanguage", sourceLanguage, f);
     WriteInt(L"API", L"Provider", static_cast<int>(providerType), f);
     WriteInt(L"API", L"OcrType", static_cast<int>(ocrType), f);
 
@@ -111,6 +112,7 @@ bool AppConfig::Load(const std::wstring& iniPath)
     apiModel = ReadStr(L"API", L"Model", apiModel, f);
     apiKey = ReadStr(L"API", L"Key", apiKey, f);
     targetLanguage = ReadStr(L"API", L"TargetLanguage", targetLanguage, f);
+    sourceLanguage = ReadStr(L"API", L"SourceLanguage", sourceLanguage, f);
     providerType = static_cast<TranslateProvider>(ReadInt(L"API", L"Provider", 1, f)); // 1 represents Google
     ocrType = static_cast<OcrType>(ReadInt(L"API", L"OcrType", 1, f)); // 1 represents WindowsOCR
 

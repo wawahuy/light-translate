@@ -3,6 +3,10 @@
 #include "src/utils/StringUtils.h"
 #include "resource.h"
 #include "src/ocr/OcrFactory.h"
+#include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.Foundation.Collections.h>
+#include <winrt/Windows.Media.Ocr.h>
+#include <winrt/Windows.Globalization.h>
 #include "src/network/TranslateProviderFactory.h"
 #include <shellapi.h>
 #include <commdlg.h>
@@ -205,6 +209,24 @@ bool SettingsWindow::Create(HINSTANCE hInstance)
     ImGui_ImplDX11_Init(m_pd3dDevice, m_pd3dDeviceContext);
 
     LoadFonts();
+
+    // Query available OCR languages on system
+    try
+    {
+        winrt::init_apartment(winrt::apartment_type::multi_threaded);
+        auto langs = winrt::Windows::Media::Ocr::OcrEngine::AvailableRecognizerLanguages();
+        m_availableOcrLangs.clear();
+        m_availableOcrLangs.push_back({ L"Default", L"Default (User Profile)" });
+        for (auto&& lang : langs)
+        {
+            m_availableOcrLangs.push_back({ lang.LanguageTag().c_str(), lang.DisplayName().c_str() });
+        }
+    }
+    catch (...)
+    {
+        m_availableOcrLangs.clear();
+        m_availableOcrLangs.push_back({ L"Default", L"Default (User Profile)" });
+    }
 
     // Populate buffers
     ConfigToUI();
@@ -783,6 +805,97 @@ void SettingsWindow::RenderAppTab()
     ImGui::Separator();
     ImGui::Spacing();
 
+    ImGui::TextDisabled("Language Settings");
+    ImGui::Spacing();
+
+    // Source Language (OCR)
+    ImGui::AlignTextToFramePadding();
+    ImGui::Text("Source:");
+    ImGui::SameLine();
+    if (m_config.ocrType == OcrType::PaddleOCR)
+    {
+        ImGui::BeginDisabled();
+        int dummyIdx = 0;
+        const char* paddleSourceLangs[] = { "Auto (PaddleOCR)" };
+        ImGui::SetNextItemWidth(240.0f);
+        ImGui::Combo("##SourceLanguageDisabled", &dummyIdx, paddleSourceLangs, 1);
+        ImGui::EndDisabled();
+    }
+    else // Windows OCR
+    {
+        // Find index of current sourceLanguage in m_availableOcrLangs
+        int currentLangIdx = 0;
+        std::vector<std::string> ocrLangNamesUtf8;
+        for (size_t i = 0; i < m_availableOcrLangs.size(); ++i)
+        {
+            ocrLangNamesUtf8.push_back(WideToUtf8(m_availableOcrLangs[i].second));
+            if (m_availableOcrLangs[i].first == m_config.sourceLanguage)
+            {
+                currentLangIdx = static_cast<int>(i);
+            }
+        }
+        
+        // Convert to vector of const char* for ImGui::Combo
+        std::vector<const char*> comboItems;
+        for (const auto& s : ocrLangNamesUtf8)
+        {
+            comboItems.push_back(s.c_str());
+        }
+        
+        ImGui::SetNextItemWidth(240.0f);
+        if (ImGui::Combo("##SourceLanguage", &currentLangIdx, comboItems.data(), static_cast<int>(comboItems.size())))
+        {
+            m_config.sourceLanguage = m_availableOcrLangs[currentLangIdx].first;
+        }
+    }
+
+    ImGui::SameLine();
+    ImGui::AlignTextToFramePadding();
+    ImGui::Text("  ->  Target:");
+    ImGui::SameLine();
+
+    // Target Language (Translation)
+    const char* const commonLangs[] = {
+        "Vietnamese", "English", "Japanese", "Chinese (Simplified)", "Chinese (Traditional)",
+        "Korean", "French", "German", "Russian", "Spanish", "Portuguese", "Italian",
+        "Arabic", "Thai", "Indonesian", "Hindi", "Turkish"
+    };
+    int langIdx = 0;
+    std::string langUtf8 = WideToUtf8(m_config.targetLanguage);
+    for (int i = 0; i < IM_ARRAYSIZE(commonLangs); ++i)
+    {
+        if (langUtf8 == commonLangs[i])
+        {
+            langIdx = i;
+            break;
+        }
+    }
+    ImGui::SetNextItemWidth(180.0f);
+    if (ImGui::Combo("##TargetLanguage", &langIdx, commonLangs, IM_ARRAYSIZE(commonLangs)))
+    {
+        m_config.targetLanguage = Utf8ToWide(commonLangs[langIdx]);
+    }
+
+    if (m_config.ocrType == OcrType::WindowsOCR)
+    {
+        ImGui::Spacing();
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 60.0f);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.38f, 0.58f, 0.98f, 1.00f));
+        if (ImGui::Selectable("Can't find your language? Add language packs in Windows Settings", false, 0, ImVec2(0, 0)))
+        {
+            ShellExecuteW(nullptr, L"open", L"ms-settings:regionlanguage", nullptr, nullptr, SW_SHOWNORMAL);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        }
+        ImGui::PopStyleColor();
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
     ImGui::TextDisabled("Control Panel");
     ImGui::Spacing();
 
@@ -997,28 +1110,6 @@ void SettingsWindow::RenderTranslateTab()
         OnProviderChanged();
     }
 
-    ImGui::SameLine();
-
-    const char* const commonLangs[] = {
-        "Vietnamese", "English", "Japanese", "Chinese (Simplified)", "Chinese (Traditional)",
-        "Korean", "French", "German", "Russian", "Spanish", "Portuguese", "Italian",
-        "Arabic", "Thai", "Indonesian", "Hindi", "Turkish"
-    };
-    int langIdx = 0;
-    std::string langUtf8 = WideToUtf8(m_config.targetLanguage);
-    for (int i = 0; i < IM_ARRAYSIZE(commonLangs); ++i)
-    {
-        if (langUtf8 == commonLangs[i])
-        {
-            langIdx = i;
-            break;
-        }
-    }
-    ImGui::SetNextItemWidth(180.0f);
-    if (ImGui::Combo("Target Lang", &langIdx, commonLangs, IM_ARRAYSIZE(commonLangs)))
-    {
-        m_config.targetLanguage = Utf8ToWide(commonLangs[langIdx]);
-    }
 
     if (m_config.providerType == TranslateProvider::DeepSeek)
     {

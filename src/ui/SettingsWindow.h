@@ -141,6 +141,7 @@ private:
     // Log list
     std::vector<std::wstring> m_logs;
     bool                  m_scrollToBottom = false;
+    std::vector<std::pair<std::wstring, std::wstring>> m_availableOcrLangs;
 
     AppConfig        m_config;
     OverlayWindow    m_overlay;
@@ -152,5 +153,5 @@ private:
     std::atomic<bool> m_switchToAboutTab{ false };
 
     static constexpr int WND_W = 720;
-    static constexpr int WND_H = 600;
+    static constexpr int WND_H = 660;
 };

@@ -9,5 +9,6 @@ class OcrFactory
 public:
     static std::unique_ptr<IOcrEngine> CreateEngine(OcrType type,
                                                     const std::wstring& detModelDir = L"",
-                                                    const std::wstring& recModelDir = L"");
+                                                    const std::wstring& recModelDir = L"",
+                                                    const std::wstring& langTag = L"");
 };

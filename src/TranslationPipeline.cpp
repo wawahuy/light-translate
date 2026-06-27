@@ -31,11 +31,20 @@ void TranslationPipeline::SetComponents(ICaptureEngine* capture,
     m_overlay = overlay;
 }
 
-void TranslationPipeline::SetOcrConfig(OcrType type, const std::wstring& detDir, const std::wstring& recDir)
+void TranslationPipeline::SetOcrConfig(OcrType type, const std::wstring& detDir, const std::wstring& recDir, const std::wstring& langTag)
 {
+    if (m_ocrType != type || m_ocrDetModelDir != detDir || m_ocrRecModelDir != recDir || m_ocrLangTag != langTag)
+    {
+        if (m_ocrEngine)
+        {
+            m_ocrEngine->Reset();
+            m_ocrEngine.reset();
+        }
+    }
     m_ocrType = type;
     m_ocrDetModelDir = detDir;
     m_ocrRecModelDir = recDir;
+    m_ocrLangTag = langTag;
 }
 
 void TranslationPipeline::SetRoiConfig(bool active, int timeoutMs, RECT roiRect)
@@ -461,7 +470,7 @@ bool TranslationPipeline::InitializeOcrEngine()
 
     if (!m_ocrEngine)
     {
-        m_ocrEngine = OcrFactory::CreateEngine(m_ocrType, m_ocrDetModelDir, m_ocrRecModelDir);
+        m_ocrEngine = OcrFactory::CreateEngine(m_ocrType, m_ocrDetModelDir, m_ocrRecModelDir, m_ocrLangTag);
     }
 
     if (OnStatus) OnStatus(L"Initializing OCR engine...");
