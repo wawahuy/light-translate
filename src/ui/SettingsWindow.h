@@ -53,7 +53,6 @@ private:
     void RenderRegionTab();
     void RenderTranslateTab();
     void RenderSystemTab();
-    void RenderOutputLogTab();
     void RenderAboutTab();
 
     // -- Capture mode & Display changes ----------------------------------------

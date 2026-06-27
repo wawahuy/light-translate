@@ -713,12 +713,6 @@ void SettingsWindow::RenderUI()
             ImGui::EndTabItem();
         }
 
-        // ----------------- OUTPUT LOG TAB -----------------
-        if (ImGui::BeginTabItem("Output Log"))
-        {
-            RenderOutputLogTab();
-            ImGui::EndTabItem();
-        }
 
         // ----------------- ABOUT TAB -----------------
         ImGuiTabItemFlags aboutFlags = 0;
@@ -770,6 +764,20 @@ void SettingsWindow::RenderAppTab()
                            "• Maximum rendering performance, zero window positioning lag, and seamless overlay.");
     }
     ImGui::PopStyleColor();
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::TextDisabled("OCR Engine");
+    ImGui::Spacing();
+    const char* ocrOptions[] = { "PaddleOCR", "Windows OCR (Default)" };
+    int currentOcr = (m_config.ocrType == OcrType::PaddleOCR) ? 0 : 1;
+    ImGui::SetNextItemWidth(260.0f);
+    if (ImGui::Combo("##OcrProvider", &currentOcr, ocrOptions, IM_ARRAYSIZE(ocrOptions)))
+    {
+        m_config.ocrType = (currentOcr == 0) ? OcrType::PaddleOCR : OcrType::WindowsOCR;
+    }
 
     ImGui::Spacing();
     ImGui::Separator();
@@ -1045,18 +1053,10 @@ void SettingsWindow::RenderSystemTab()
         m_recordingHotkeyType = 3;
     }
 
-    ImGui::Text("OCR Engine:");
-    const char* ocrOptions[] = { "PaddleOCR", "Windows OCR (Default)" };
-    int currentOcr = (m_config.ocrType == OcrType::PaddleOCR) ? 0 : 1;
-    ImGui::SetNextItemWidth(260.0f);
-    if (ImGui::Combo("OCR Provider", &currentOcr, ocrOptions, IM_ARRAYSIZE(ocrOptions)))
-    {
-        m_config.ocrType = (currentOcr == 0) ? OcrType::PaddleOCR : OcrType::WindowsOCR;
-    }
-}
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
 
-void SettingsWindow::RenderOutputLogTab()
-{
     ImGui::TextDisabled("System Output Log");
     ImGui::Spacing();
     
@@ -1072,6 +1072,7 @@ void SettingsWindow::RenderOutputLogTab()
     }
     ImGui::EndChild();
 }
+
 
 void SettingsWindow::RenderAboutTab()
 {
