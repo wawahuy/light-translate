@@ -184,7 +184,7 @@ bool SettingsWindow::Create(HINSTANCE hInstance)
     int sy = GetSystemMetrics(SM_CYSCREEN);
 
     m_hwnd = CreateWindowExW(
-        WS_EX_APPWINDOW,
+        WS_EX_APPWINDOW | WS_EX_TOPMOST,
         CLASS_NAME,
         L"LIGHT TRANSLATE — Settings",
         WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX | WS_SYSMENU,
