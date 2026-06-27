@@ -77,6 +77,8 @@ struct AppConfig
     int          roiTimeoutMs  = 3000;
     RECT         roiRect       = { 0, 0, 0, 0 };
 
+    int64_t      skipUpdateUntil = 0;
+
     // ── Persistence ───────────────────────────────────────────────────────────
     void Save(const std::wstring& iniPath) const;
     bool Load(const std::wstring& iniPath);

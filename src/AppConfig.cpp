@@ -40,6 +40,22 @@ static double ReadDouble(const wchar_t* sec, const wchar_t* key, double def, con
     return std::wcstod(buf, nullptr);
 }
 
+static void WriteInt64(const wchar_t* sec, const wchar_t* key, int64_t v, const wchar_t* f)
+{
+    WritePrivateProfileStringW(sec, key, std::to_wstring(v).c_str(), f);
+}
+
+static int64_t ReadInt64(const wchar_t* sec, const wchar_t* key, int64_t def, const wchar_t* f)
+{
+    wchar_t buf[64] = {};
+    GetPrivateProfileStringW(sec, key, std::to_wstring(def).c_str(), buf, 64, f);
+    try {
+        return std::stoll(buf);
+    } catch (...) {
+        return def;
+    }
+}
+
 // -- AppConfig::Save -----------------------------------------------------------
 
 void AppConfig::Save(const std::wstring& iniPath) const
@@ -97,6 +113,8 @@ void AppConfig::Save(const std::wstring& iniPath) const
     WriteInt(L"ROI", L"Top",       roiRect.top,       f);
     WriteInt(L"ROI", L"Right",     roiRect.right,     f);
     WriteInt(L"ROI", L"Bottom",    roiRect.bottom,    f);
+
+    WriteInt64(L"System", L"SkipUpdateUntil", skipUpdateUntil, f);
 }
 
 // -- AppConfig::Load -----------------------------------------------------------
@@ -156,6 +174,8 @@ bool AppConfig::Load(const std::wstring& iniPath)
     roiRect.top  = ReadInt(L"ROI", L"Top",       0,    f);
     roiRect.right= ReadInt(L"ROI", L"Right",     0,    f);
     roiRect.bottom=ReadInt(L"ROI", L"Bottom",    0,    f);
+
+    skipUpdateUntil = ReadInt64(L"System", L"SkipUpdateUntil", 0, f);
 
     return true;
 }

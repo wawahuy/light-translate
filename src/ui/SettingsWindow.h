@@ -47,6 +47,7 @@ private:
     void RenderUI();
     void ApplyImGuiStyle();
     void LoadFonts();
+    void RenderUpdatePopup();
 
     // -- Tab Renderers ---------------------------------------------------------
     void RenderAppTab();
@@ -155,6 +156,9 @@ private:
     std::unique_ptr<AppController> m_controller;
     Updater          m_updater;
     std::atomic<bool> m_switchToAboutTab{ false };
+    std::atomic<bool> m_showUpdatePopup{ false };
+    bool              m_updatePopupOpen = false;
+    bool              m_skipUpdateFor24h = false;
 
     // -- API Connection Test State ---------------------------------------------
     enum class ApiTestState

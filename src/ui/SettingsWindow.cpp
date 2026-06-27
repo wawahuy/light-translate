@@ -14,6 +14,7 @@
 #include <string>
 #include <cwchar>
 #include <thread>
+#include <ctime>
 #include <windowsx.h>
 #include <opencv2/imgproc.hpp>
 
@@ -253,23 +254,21 @@ bool SettingsWindow::Create(HINSTANCE hInstance)
     SyncHelperWindows();
 
     // Automatically check for updates on startup.
-    m_updater.CheckForUpdateAsync(APP_VERSION, [this]() {
-        if (m_updater.GetStatus() == ::UpdateStatus::UpdateAvailable)
-        {
-            std::wstring msg = L"A new version (" + Utf8ToWide(m_updater.GetLatestVersion()) + L") is available.\n\nDo you want to download and install it now?";
-            int res = MessageBoxW(nullptr, msg.c_str(), L"Light Translate Update", MB_YESNO | MB_ICONINFORMATION | MB_SETFOREGROUND);
-            if (res == IDYES)
+    int64_t currentTime = static_cast<int64_t>(time(nullptr));
+    if (currentTime >= m_config.skipUpdateUntil)
+    {
+        m_updater.CheckForUpdateAsync(APP_VERSION, [this]() {
+            if (m_updater.GetStatus() == ::UpdateStatus::UpdateAvailable)
             {
-                m_switchToAboutTab = true;
-                m_updater.DownloadUpdateAsync();
+                m_showUpdatePopup = true;
                 
                 // Restore settings window and bring it to front
                 ShowWindow(m_hwnd, SW_SHOW);
                 ShowWindow(m_hwnd, SW_RESTORE);
                 SetForegroundWindow(m_hwnd);
             }
-        }
-    });
+        });
+    }
 
     return true;
 }
@@ -753,7 +752,66 @@ void SettingsWindow::RenderUI()
         ImGui::EndTabBar();
     }
 
+    RenderUpdatePopup();
+
     ImGui::End();
+}
+
+void SettingsWindow::RenderUpdatePopup()
+{
+    if (m_showUpdatePopup.load())
+    {
+        ImGui::OpenPopup("Update Available");
+        m_showUpdatePopup = false;
+        m_updatePopupOpen = true;
+        m_skipUpdateFor24h = false;
+    }
+
+    // Always center the modal popup
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+    if (ImGui::BeginPopupModal("Update Available", &m_updatePopupOpen, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.95f, 0.96f, 0.98f, 1.00f), "A new version (%s) of Light Translate is available.", m_updater.GetLatestVersion().c_str());
+        ImGui::Text("Do you want to download and install it now?");
+        ImGui::Spacing();
+
+        ImGui::Text("Changelog / Release Notes:");
+        ImGui::BeginChild("ChangelogBoxPopup", ImVec2(450, 150), true);
+        ImGui::TextWrapped("%s", m_updater.GetReleaseNotes().c_str());
+        ImGui::EndChild();
+        ImGui::Spacing();
+
+        ImGui::Checkbox("Do not check for updates again for 24 hours", &m_skipUpdateFor24h);
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        if (ImGui::Button("Download and Update", ImVec2(0, 0)))
+        {
+            m_switchToAboutTab = true;
+            m_updater.DownloadUpdateAsync();
+            ImGui::CloseCurrentPopup();
+            m_updatePopupOpen = false;
+        }
+        ImGui::SetItemDefaultFocus();
+        ImGui::SameLine();
+
+        if (ImGui::Button("Cancel", ImVec2(0, 0)) || !m_updatePopupOpen)
+        {
+            if (m_skipUpdateFor24h)
+            {
+                m_config.skipUpdateUntil = static_cast<int64_t>(time(nullptr)) + 24 * 3600;
+                m_config.Save(GetIniPath());
+            }
+            ImGui::CloseCurrentPopup();
+            m_updatePopupOpen = false;
+        }
+
+        ImGui::EndPopup();
+    }
 }
 
 // -----------------------------------------------------------------------------
