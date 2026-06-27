@@ -5,6 +5,7 @@
 #include <atomic>
 #include <string>
 #include <vector>
+#include <mutex>
 #include "src/AppConfig.h"
 #include "src/utils/Updater.h"
 #include "src/ui/OverlayWindow.h"
@@ -49,7 +50,10 @@ private:
 
     // -- Tab Renderers ---------------------------------------------------------
     void RenderAppTab();
-    void RenderRealtimeTab();
+    void RenderAdvanceTab();
+    void RenderCaptureSettingSubTab();
+    void RenderRoiIdleDetectionSubTab();
+    void RenderOverlaySubTab();
     void RenderRegionTab();
     void RenderTranslateTab();
     void RenderSystemTab();
@@ -151,6 +155,18 @@ private:
     std::unique_ptr<AppController> m_controller;
     Updater          m_updater;
     std::atomic<bool> m_switchToAboutTab{ false };
+
+    // -- API Connection Test State ---------------------------------------------
+    enum class ApiTestState
+    {
+        Idle,
+        Testing,
+        Success,
+        Failed
+    };
+    std::atomic<ApiTestState> m_apiTestState{ ApiTestState::Idle };
+    std::wstring              m_apiTestMessage;
+    std::mutex                m_apiTestMutex;
 
     static constexpr int WND_W = 720;
     static constexpr int WND_H = 660;

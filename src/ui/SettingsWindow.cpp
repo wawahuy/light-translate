@@ -50,6 +50,20 @@ namespace {
         out[1] = static_cast<float>(GetGValue(cr)) / 255.0f;
         out[2] = static_cast<float>(GetBValue(cr)) / 255.0f;
     }
+
+    void HelpMarker(const char* desc)
+    {
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+        {
+            ImGui::BeginTooltip();
+            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+            ImGui::TextUnformatted(desc);
+            ImGui::PopTextWrapPos();
+            ImGui::EndTooltip();
+        }
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -707,24 +721,10 @@ void SettingsWindow::RenderUI()
             ImGui::EndTabItem();
         }
 
-        // ----------------- REALTIME TAB -----------------
-        if (ImGui::BeginTabItem("Realtime"))
+        // ----------------- ADVANCE TAB -----------------
+        if (ImGui::BeginTabItem("Advance"))
         {
-            RenderRealtimeTab();
-            ImGui::EndTabItem();
-        }
-
-        // ----------------- REGION TAB -----------------
-        if (ImGui::BeginTabItem("Region"))
-        {
-            RenderRegionTab();
-            ImGui::EndTabItem();
-        }
-
-        // ----------------- TRANSLATE TAB -----------------
-        if (ImGui::BeginTabItem("Translate"))
-        {
-            RenderTranslateTab();
+            RenderAdvanceTab();
             ImGui::EndTabItem();
         }
 
@@ -896,9 +896,6 @@ void SettingsWindow::RenderAppTab()
     ImGui::Separator();
     ImGui::Spacing();
 
-    ImGui::TextDisabled("Control Panel");
-    ImGui::Spacing();
-
     if (m_running)
     {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.15f, 0.15f, 1.00f));
@@ -937,9 +934,42 @@ void SettingsWindow::RenderAppTab()
     ImGui::Spacing();
 }
 
-void SettingsWindow::RenderRealtimeTab()
+void SettingsWindow::RenderAdvanceTab()
 {
-    ImGui::TextDisabled("Capture Settings");
+    if (ImGui::BeginTabBar("AdvanceTabs"))
+    {
+        if (ImGui::BeginTabItem("Capture Setting"))
+        {
+            RenderCaptureSettingSubTab();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("ROI Idle Detection"))
+        {
+            RenderRoiIdleDetectionSubTab();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Overlay"))
+        {
+            RenderOverlaySubTab();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Region"))
+        {
+            RenderRegionTab();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Translate"))
+        {
+            RenderTranslateTab();
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
+}
+
+void SettingsWindow::RenderCaptureSettingSubTab()
+{
+    ImGui::Spacing();
     
     // Monitor index selection
     const char* monitorOptions[] = { "0 - Primary", "1 - Second", "2 - Third" };
@@ -949,15 +979,22 @@ void SettingsWindow::RenderRealtimeTab()
     {
         m_config.monitorIndex = currentMon;
     }
+    HelpMarker("Select the display screen where the application captures images.");
+
+    ImGui::Spacing();
 
     // Capture region display/reset
-    ImGui::SameLine();
     if (ImGui::Button("Reset Capture Region"))
     {
         OnSelectRegion();
     }
-    ImGui::SameLine();
-    ImGui::Text("Region: %s", WideToUtf8(GetRegionInfoText()).c_str());
+    HelpMarker("Reset the capture boundaries to the center of the selected monitor.");
+    ImGui::SameLine(0.0f, 15.0f);
+    ImGui::Text("Current Region: %s", WideToUtf8(GetRegionInfoText()).c_str());
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
 
     // Capture Mode selection
     const char* modeOptions[] = { "Auto (continuous)", "Hotkey (single frame)" };
@@ -968,12 +1005,17 @@ void SettingsWindow::RenderRealtimeTab()
         m_config.captureMode = static_cast<CaptureMode>(currentMode);
         OnCaptureModeChanged();
     }
+    HelpMarker("Choose between automatic continuous capturing or capturing on hotkey press.");
+
+    ImGui::Spacing();
 
     // Scale ROI
-    ImGui::SameLine();
     ImGui::SetNextItemWidth(120.0f);
     ImGui::DragInt("Scale ROI (%)", &m_config.scaleRoi, 1.0f, 10, 200);
     if (m_config.scaleRoi <= 0) m_config.scaleRoi = 100;
+    HelpMarker("Scale the Region of Interest for OCR processing. Increase if source text font is too small.");
+
+    ImGui::Spacing();
 
     // Mode-specific configuration
     if (m_config.captureMode == CaptureMode::Auto)
@@ -981,156 +1023,273 @@ void SettingsWindow::RenderRealtimeTab()
         ImGui::SetNextItemWidth(120.0f);
         ImGui::DragInt("Interval (ms)", &m_config.captureIntervalMs, 50.0f, 100, 10000);
         if (m_config.captureIntervalMs <= 0) m_config.captureIntervalMs = 1000;
+        HelpMarker("Delay between consecutive automatic captures.");
 
-        ImGui::SameLine();
+        ImGui::Spacing();
         std::string pauseHotkeyStr = m_recordingHotkeyType == 2 ? "Press a key..." : WideToUtf8(HotkeyToString(m_config.pauseHotkeyVk, m_config.pauseHotkeyMod));
+        ImGui::AlignTextToFramePadding();
         ImGui::Text("Pause Hotkey:"); ImGui::SameLine();
-        if (ImGui::Button(pauseHotkeyStr.c_str(), ImVec2(130, 0)))
+        if (ImGui::Button(pauseHotkeyStr.c_str(), ImVec2(150, 0)))
         {
             m_recordingHotkeyType = 2;
         }
+        HelpMarker("Hotkey to pause/resume the automatic capturing process.");
     }
     else
     {
         std::string hotkeyStr = m_recordingHotkeyType == 1 ? "Press a key..." : WideToUtf8(HotkeyToString(m_config.hotkeyVk, m_config.hotkeyMod));
+        ImGui::AlignTextToFramePadding();
         ImGui::Text("Capture Hotkey:"); ImGui::SameLine();
-        if (ImGui::Button(hotkeyStr.c_str(), ImVec2(130, 0)))
+        if (ImGui::Button(hotkeyStr.c_str(), ImVec2(150, 0)))
         {
             m_recordingHotkeyType = 1;
         }
+        HelpMarker("Press this hotkey to manually capture a single frame and translate.");
     }
+    
+    ImGui::Spacing();
+}
 
+void SettingsWindow::RenderRoiIdleDetectionSubTab()
+{
+    ImGui::Spacing();
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
+    ImGui::TextWrapped("ROI Idle Detection pauses automatic screen capture and translation when no text changes "
+                       "are detected in the active region. This reduces CPU usage and translation API calls.");
+    ImGui::PopStyleColor();
+    ImGui::Spacing();
     ImGui::Separator();
-    ImGui::TextDisabled("ROI Idle Text Detection");
+    ImGui::Spacing();
 
     if (ImGui::Checkbox("Enable ROI Idle Detection", &m_config.roiActive))
     {
         OnRoiActiveChanged();
     }
+    HelpMarker("Enable/disable idle state checking for the active Region of Interest.");
+
     if (m_config.roiActive)
     {
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(120.0f);
+        ImGui::Spacing();
+        ImGui::SetNextItemWidth(150.0f);
         ImGui::DragInt("Idle Timeout (ms)", &m_config.roiTimeoutMs, 100.0f, 500, 30000);
         if (m_config.roiTimeoutMs <= 0) m_config.roiTimeoutMs = 3000;
+        HelpMarker("Duration of no-text-changes required to mark the region as idle.");
 
-        ImGui::SameLine();
+        ImGui::Spacing();
         RECT roi = m_config.roiRect;
-        ImGui::Text("ROI Rect (X,Y,W,H): %ld, %ld, %ld, %ld", roi.left, roi.top, roi.right - roi.left, roi.bottom - roi.top);
+        ImGui::Text("Active ROI Bounding Box (X, Y, W, H):");
+        ImGui::TextColored(ImVec4(0.48f, 0.40f, 0.92f, 1.00f), "  %ld, %ld, %ld, %ld", roi.left, roi.top, roi.right - roi.left, roi.bottom - roi.top);
     }
+    
+    ImGui::Spacing();
+}
 
-    ImGui::Separator();
-    ImGui::TextDisabled("Overlay & Typography");
-
+void SettingsWindow::RenderOverlaySubTab()
+{
+    ImGui::Spacing();
+    
     const char* dispOptions[] = { "In-Place (Default)", "Overlay Window" };
     int currentDisp = (m_config.displayMode == DisplayMode::InPlace) ? 0 : 1;
-    ImGui::SetNextItemWidth(200.0f);
+    ImGui::SetNextItemWidth(250.0f);
     if (ImGui::Combo("Display Mode", &currentDisp, dispOptions, IM_ARRAYSIZE(dispOptions)))
     {
         m_config.displayMode = (currentDisp == 0) ? DisplayMode::InPlace : DisplayMode::Overlay;
         OnDisplayModeChanged();
     }
+    HelpMarker("In-Place: Overlays text directly on top of the original text.\n"
+               "Overlay Window: Renders translation in a separate draggable container.");
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
 
     if (m_config.displayMode == DisplayMode::Overlay)
     {
-        ImGui::SameLine();
-        ImGui::Text("Pos: X: %ld   Y: %ld", m_config.overlayPos.x, m_config.overlayPos.y);
-
-        ImGui::SetNextItemWidth(150.0f);
-        ImGui::InputText("Font Name", m_fontNameBuf, sizeof(m_fontNameBuf));
+        ImGui::Text("Overlay Position:"); ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.48f, 0.40f, 0.92f, 1.00f), "X: %ld, Y: %ld", m_config.overlayPos.x, m_config.overlayPos.y);
+        HelpMarker("Current top-left position of the draggable overlay window.");
+        ImGui::Spacing();
         
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(80.0f);
-        ImGui::DragInt("Size", &m_config.fontSize, 1.0f, 8, 72);
+        ImGui::SetNextItemWidth(200.0f);
+        ImGui::InputText("Font Name", m_fontNameBuf, sizeof(m_fontNameBuf));
+        HelpMarker("Name of the system font (e.g. Arial, Segoe UI, Tahoma). Font must support Vietnamese/target characters.");
+        
+        ImGui::Spacing();
+        ImGui::SetNextItemWidth(120.0f);
+        ImGui::DragInt("Font Size", &m_config.fontSize, 1.0f, 8, 72);
         if (m_config.fontSize <= 0) m_config.fontSize = 24;
+        HelpMarker("Adjust the font size of the translated text.");
 
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(50.0f);
+        ImGui::Spacing();
         if (ImGui::ColorEdit3("Text Color", m_textColorFloat, ImGuiColorEditFlags_NoInputs))
         {
             m_config.textColor = FloatToColorref(m_textColorFloat);
             SyncHelperWindows();
         }
+        HelpMarker("Color of the translated text.");
 
-        ImGui::Checkbox("Shadow", &m_config.shadowEnabled);
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        ImGui::Checkbox("Enable Text Shadow", &m_config.shadowEnabled);
+        HelpMarker("Draw a drop shadow under the text to increase readability.");
         if (m_config.shadowEnabled)
         {
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(50.0f);
-            if (ImGui::ColorEdit3("Shadow Color", m_shadowColorFloat, ImGuiColorEditFlags_NoInputs))
+            ImGui::SameLine(0.0f, 15.0f);
+            if (ImGui::ColorEdit3("Color##Shadow", m_shadowColorFloat, ImGuiColorEditFlags_NoInputs))
             {
                 m_config.shadowColor = FloatToColorref(m_shadowColorFloat);
                 SyncHelperWindows();
             }
+            HelpMarker("Color of the text drop shadow.");
         }
 
-        ImGui::SameLine();
-        ImGui::Checkbox("Stroke", &m_config.strokeEnabled);
+        ImGui::Spacing();
+        ImGui::Checkbox("Enable Text Outline (Stroke)", &m_config.strokeEnabled);
+        HelpMarker("Draw an outline stroke around characters.");
         if (m_config.strokeEnabled)
         {
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(50.0f);
-            if (ImGui::ColorEdit3("Stroke Color", m_strokeColorFloat, ImGuiColorEditFlags_NoInputs))
+            ImGui::SameLine(0.0f, 15.0f);
+            if (ImGui::ColorEdit3("Color##Stroke", m_strokeColorFloat, ImGuiColorEditFlags_NoInputs))
             {
                 m_config.strokeColor = FloatToColorref(m_strokeColorFloat);
                 SyncHelperWindows();
             }
-            ImGui::SameLine();
+            HelpMarker("Color of the text outline stroke.");
+            
+            ImGui::SameLine(0.0f, 15.0f);
             ImGui::SetNextItemWidth(80.0f);
-            ImGui::DragFloat("Width", &m_config.strokeWidth, 0.1f, 1.0f, 10.0f, "%.1f");
-            if (m_config.strokeWidth <= 0.0f) m_config.strokeWidth = 1.0f;
+            if (ImGui::DragFloat("Width##Stroke", &m_config.strokeWidth, 0.1f, 1.0f, 10.0f, "%.1f"))
+            {
+                if (m_config.strokeWidth <= 0.0f) m_config.strokeWidth = 1.0f;
+            }
+            HelpMarker("Thickness of the outline stroke.");
         }
     }
+    else
+    {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+        ImGui::TextWrapped("Typography settings are only configurable when 'Overlay Window' display mode is active.\n"
+                           "In-Place mode automatically scales and positions text on the original region.");
+        ImGui::PopStyleColor();
+    }
+    
+    ImGui::Spacing();
 }
 
 void SettingsWindow::RenderRegionTab()
 {
-    ImGui::TextWrapped("Press the hotkey to select a screen region for quick translation.");
+    ImGui::Spacing();
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
+    ImGui::TextWrapped("Manual Region Translation allows you to quickly crop a specific area on your screen, "
+                       "perform OCR, and translate it immediately. Ideal for static dialogs or web text.");
+    ImGui::PopStyleColor();
+    
+    ImGui::Spacing();
+    ImGui::Separator();
     ImGui::Spacing();
 
     std::string regHotkeyStr = m_recordingHotkeyType == 4 ? "Press a key..." : WideToUtf8(HotkeyToString(m_config.regionHotkeyVk, m_config.regionHotkeyMod));
+    ImGui::AlignTextToFramePadding();
     ImGui::Text("Selection Hotkey:"); ImGui::SameLine();
     if (ImGui::Button(regHotkeyStr.c_str(), ImVec2(150, 0)))
     {
         m_recordingHotkeyType = 4;
     }
+    HelpMarker("Hotkey to trigger screen crop mode. Press Esc to cancel cropping.");
 
     ImGui::Spacing();
-    ImGui::TextWrapped("After selecting a region, the app will OCR and translate the text. Press any key to dismiss the result overlay.");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::Text("Instructions:");
+    ImGui::BulletText("Press the selection hotkey.");
+    ImGui::BulletText("Click and drag left mouse button to crop a region.");
+    ImGui::BulletText("Release to show translated overlay.");
+    ImGui::BulletText("Press Esc or click anywhere else to dismiss the overlay.");
+    
+    ImGui::Spacing();
 }
 
 void SettingsWindow::RenderTranslateTab()
 {
+    ImGui::Spacing();
+
     const char* provOptions[] = { "DeepSeek", "Google Translate" };
     int currentProv = (m_config.providerType == TranslateProvider::DeepSeek) ? 0 : 1;
-    ImGui::SetNextItemWidth(220.0f);
-    if (ImGui::Combo("Provider", &currentProv, provOptions, IM_ARRAYSIZE(provOptions)))
+    ImGui::SetNextItemWidth(250.0f);
+    if (ImGui::Combo("Translation Provider", &currentProv, provOptions, IM_ARRAYSIZE(provOptions)))
     {
         m_config.providerType = (currentProv == 0) ? TranslateProvider::DeepSeek : TranslateProvider::Google;
         OnProviderChanged();
     }
+    HelpMarker("Select translation engine. Google Translate is free; DeepSeek is an advanced LLM and requires API Key.");
 
+    ImGui::Spacing();
 
     if (m_config.providerType == TranslateProvider::DeepSeek)
     {
-        ImGui::SetNextItemWidth(180.0f);
+        ImGui::SetNextItemWidth(200.0f);
         ImGui::InputText("API Model", m_apiModelBuf, sizeof(m_apiModelBuf));
+        HelpMarker("Specific DeepSeek translation LLM model. Default is 'deepseek-chat'.");
         
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(250.0f);
+        ImGui::Spacing();
+        ImGui::SetNextItemWidth(300.0f);
         ImGui::InputText("API Key", m_apiKeyBuf, sizeof(m_apiKeyBuf), ImGuiInputTextFlags_Password);
+        HelpMarker("Your DeepSeek API auth token. Do not share.");
+    }
+    else
+    {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+        ImGui::TextWrapped("Google Translate uses free web scraping API. No credentials are required.");
+        ImGui::PopStyleColor();
     }
 
     ImGui::Spacing();
-    if (ImGui::Button("Test Connection", ImVec2(150, 0)))
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    if (ImGui::Button("Test Connection", ImVec2(160, 0)))
     {
         OnTestApi();
     }
-    ImGui::SameLine();
-    if (ImGui::Button("Save Settings", ImVec2(150, 0)))
+    
+    ImGui::SameLine(0.0f, 20.0f);
+    
+    if (ImGui::Button("Save Settings", ImVec2(160, 0)))
     {
         OnSave();
     }
+
+    ApiTestState state = m_apiTestState.load();
+    if (state != ApiTestState::Idle)
+    {
+        ImGui::Spacing();
+        ImGui::Spacing();
+        
+        std::wstring wmsg;
+        {
+            std::lock_guard<std::mutex> lock(m_apiTestMutex);
+            wmsg = m_apiTestMessage;
+        }
+        std::string msg = WideToUtf8(wmsg);
+
+        if (state == ApiTestState::Testing)
+        {
+            ImGui::TextColored(ImVec4(0.9f, 0.7f, 0.1f, 1.0f), "%s", msg.c_str());
+        }
+        else if (state == ApiTestState::Success)
+        {
+            ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "%s", msg.c_str());
+        }
+        else if (state == ApiTestState::Failed)
+        {
+            ImGui::TextColored(ImVec4(0.9f, 0.2f, 0.2f, 1.0f), "%s", msg.c_str());
+        }
+    }
+    
+    ImGui::Spacing();
 }
 
 void SettingsWindow::RenderSystemTab()
@@ -1577,24 +1736,56 @@ void SettingsWindow::OnSelectRegion()
 void SettingsWindow::OnTestApi()
 {
     UIToConfig();
+    
+    {
+        std::lock_guard<std::mutex> lock(m_apiTestMutex);
+        m_apiTestMessage = L"Testing connection...";
+    }
+    m_apiTestState = ApiTestState::Testing;
     UpdateStatus(L"Testing connection...");
 
-    auto tc = TranslateProviderFactory::CreateProvider(m_config.providerType);
-    if (!tc)
-    {
-        UpdateStatus(L"API Test failed: Invalid translate provider.");
-        return;
-    }
-    tc->SetApiKey(m_config.apiKey);
-    tc->SetApiModel(m_config.apiModel);
-    tc->SetTargetLanguage(m_config.targetLanguage);
+    std::thread([this]() {
+        auto tc = TranslateProviderFactory::CreateProvider(m_config.providerType);
+        if (!tc)
+        {
+            {
+                std::lock_guard<std::mutex> lock(m_apiTestMutex);
+                m_apiTestMessage = L"Invalid translate provider.";
+            }
+            m_apiTestState = ApiTestState::Failed;
+            UpdateStatus(L"API Test failed: Invalid translate provider.");
+            PostMessageW(m_hwnd, WM_PAINT, 0, 0);
+            return;
+        }
 
-    std::wstring result = tc->Translate(L"Hello world! This is a test connection message.");
+        tc->SetApiKey(m_config.apiKey);
+        tc->SetApiModel(m_config.apiModel);
+        tc->SetTargetLanguage(m_config.targetLanguage);
 
-    if (!result.empty())
-        UpdateStatus(L"Connection OK. Response: " + result);
-    else
-        UpdateStatus(L"Connection error: " + tc->GetLastError());
+        std::wstring result = tc->Translate(L"Hello world! This is a test connection message.");
+
+        if (!result.empty())
+        {
+            {
+                std::lock_guard<std::mutex> lock(m_apiTestMutex);
+                m_apiTestMessage = L"Connection OK! Response: " + result;
+            }
+            m_apiTestState = ApiTestState::Success;
+            UpdateStatus(L"Connection OK. Response: " + result);
+        }
+        else
+        {
+            std::wstring err = tc->GetLastError();
+            {
+                std::lock_guard<std::mutex> lock(m_apiTestMutex);
+                m_apiTestMessage = L"Connection error: " + err;
+            }
+            m_apiTestState = ApiTestState::Failed;
+            UpdateStatus(L"Connection error: " + err);
+        }
+
+        PostMessageW(m_hwnd, WM_PAINT, 0, 0);
+    }).detach();
 }
 
 void SettingsWindow::OnToggleDrag()
@@ -1616,6 +1807,7 @@ void SettingsWindow::OnToggleDrag()
 
 void SettingsWindow::OnProviderChanged()
 {
+    m_apiTestState = ApiTestState::Idle;
     if (m_config.providerType == TranslateProvider::DeepSeek)
         UpdateStatus(L"Provider: DeepSeek - uses DeepSeek API via HTTP REST.");
     else
@@ -1625,6 +1817,7 @@ void SettingsWindow::OnProviderChanged()
 void SettingsWindow::OnSave()
 {
     UIToConfig();
+    m_apiTestState = ApiTestState::Idle;
     m_config.Save(GetIniPath());
     UpdateStatus(L"Settings saved.");
     m_controller->ResetRegionOcr();
