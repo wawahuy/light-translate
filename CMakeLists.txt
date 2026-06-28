@@ -300,3 +300,16 @@ if (WIN32 AND WITH_MKL)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${PADDLE_LIB}/third_party/install/onednn/lib/mkldnn.dll ./release/mkldnn.dll
     )
 endif()
+
+if (DEFINED ENV{GITHUB_ACTIONS} OR DEFINED ENV{CI})
+    set(BUILD_HOOK_TEST_APP_DEFAULT OFF)
+else()
+    set(BUILD_HOOK_TEST_APP_DEFAULT ON)
+endif()
+option(BUILD_HOOK_TEST_APP "Build the graphics hooking test application" ${BUILD_HOOK_TEST_APP_DEFAULT})
+
+if(BUILD_HOOK_TEST_APP)
+    add_subdirectory(hook_test_app)
+endif()
+
+
